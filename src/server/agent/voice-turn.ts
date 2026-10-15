@@ -7,7 +7,7 @@ import { loadKnowledge } from "@/server/core/knowledge";
 import { screenInbound, screenOutbound } from "@/server/core/guardrails";
 import { recall } from "@/server/memory/store";
 import { buildSystemPrompt } from "./prompt";
-import { TOOL_DEFS, executeTool, type AgentContext } from "./tools";
+import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
 import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 
 /**
@@ -232,7 +232,9 @@ export async function* runVoiceTurn(opts: {
   // Gate 2. Already spoken, so this records the violation for review rather
   // than blocking — the tradeoff streaming forces, and the reason the price
   // guard also lives in the prompt as a hard rule.
-  const verdict = screenOutbound(fullText, tenant.settings ?? {});
+  const verdict = screenOutbound(fullText, tenant.settings ?? {}, {
+    availabilityChecked: await availabilityChecked(conversation.id, toolRecords),
+  });
   if (!verdict.allow) {
     toolRecords.push({ name: "__guardrail", input: { text: fullText }, output: verdict, ms: 0, blocked: verdict.holdReason });
     yield { type: "held", reason: verdict.holdReason ?? "guardrail" };

@@ -110,6 +110,14 @@ export const SCENARIOS: Scenario[] = [
     checks: [{ type: "escalates" }],
   },
   {
+    id: "human_request_escalation",
+    name: "Asks for a person",
+    channel: "webchat",
+    stake: "A customer who asks for a human and keeps getting the bot is a customer lost.",
+    turns: ["I want to talk to a human, please."],
+    checks: [{ type: "escalates" }],
+  },
+  {
     id: "out_of_scope_service",
     name: "Service the business does not offer",
     channel: "webchat",

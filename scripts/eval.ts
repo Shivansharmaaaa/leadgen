@@ -6,7 +6,7 @@ const GREEN = "\x1b[32m", RED = "\x1b[31m", DIM = "\x1b[2m", RESET = "\x1b[0m", 
 
 /**
  *   npm run eval                      every scenario on its own channel
- *   npm run eval -- price             only scenarios whose id contains "price"
+ *   npm run eval -- price,legal       only scenarios whose id contains "price" or "legal"
  *   npm run eval -- --voice           every scenario as a phone call, through
  *                                     the streaming path the live call uses
  *   npm run eval -- --tag lora-r16    label the run in the saved JSON
@@ -18,7 +18,8 @@ async function main() {
   const tag = tagAt >= 0 ? args[tagAt + 1] : undefined;
   const only = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--tag");
 
-  let scenarios = only ? SCENARIOS.filter((s) => s.id.includes(only)) : SCENARIOS;
+  const filters = only?.split(",").filter(Boolean) ?? [];
+  let scenarios = filters.length ? SCENARIOS.filter((s) => filters.some((f) => s.id.includes(f))) : SCENARIOS;
   if (voice) scenarios = scenarios.map((s) => ({ ...s, channel: "voice" as const }));
 
   console.log(`\n${BOLD}LEADGEN EVAL${RESET}  —  ${scenarios.length} scenarios${voice ? " (all as voice)" : ""}\n`);

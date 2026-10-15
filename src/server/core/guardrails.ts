@@ -11,8 +11,22 @@ const DEFAULT_ESCALATION_TRIGGERS = [
   "refund", "chargeback", "dispute", "cancel my contract",
   "injury", "injured", "hurt", "bleeding", "emergency", "gas leak", "carbon monoxide",
   "discrimination", "harassment", "complaint to", "ombudsman",
-  "speak to a human", "talk to a person", "real person", "manager", "supervisor",
+  "manager", "supervisor",
 ];
+
+/**
+ * Asking FOR a person is a handoff. Asking WHETHER this is a person is a
+ * disclosure question the agent must answer itself (CA SB 1001, EU AI Act).
+ * A bare "real person" substring escalated "am I talking to a real person?"
+ * while "I want to talk to a human" slipped through.
+ */
+const HUMAN_REQUEST_RE = new RegExp(
+  String.raw`\b(?:speak|talk|chat)\s+(?:to|with)\s+(?:a\s+|an\s+|the\s+|some\s+)?(?:real\s+|actual\s+|live\s+)?` +
+  String.raw`(?:human|person|someone|somebody|agent|representative|rep|operator)\b` +
+  String.raw`|\b(?:get|give|put)\s+me\s+(?:through\s+to\s+)?(?:a\s+|an\s+)?(?:real\s+|actual\s+|live\s+)?` +
+  String.raw`(?:human|person|representative|operator)\b`,
+  "i",
+);
 
 const ANGER_MARKERS = [
   "unacceptable", "ridiculous", "furious", "appalling", "disgusted",
@@ -38,6 +52,11 @@ export function screenInbound(body: string, settings: TenantSettings): InboundVe
     if (text.includes(t)) {
       return { escalate: true, reason: "escalation_trigger", trigger: t };
     }
+  }
+
+  const asked = text.match(HUMAN_REQUEST_RE);
+  if (asked) {
+    return { escalate: true, reason: "escalation_trigger", trigger: asked[0] };
   }
 
   const angerHits = ANGER_MARKERS.filter((m) => text.includes(m));
@@ -68,7 +87,19 @@ const CURRENCY_SYMBOL_RE = /[$£€]\s?\d|\d\s?(?:dollars|pounds|quid|usd|cad|gb
  * configured range. Quoting $50 for a job that starts at $300 is the single
  * most expensive thing an AI receptionist can do.
  */
-export function screenOutbound(body: string, settings: TenantSettings): OutboundVerdict {
+/**
+ * Two clock times offered as a choice: "Thursday at 9 or Friday at 2pm".
+ * Deliberately narrow — "we're open 8am to 5pm" is a fact, not a slot offer.
+ */
+const CLOCK = String.raw`(?:\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\bat\s+\d{1,2}(?::\d{2})?\b)`;
+const SLOT_CHOICE_RE = new RegExp(`${CLOCK}[^.?!]{0,40}\\bor\\b[^.?!]{0,40}${CLOCK}`, "i");
+
+export function screenOutbound(
+  body: string,
+  settings: TenantSettings,
+  /** False when check_availability has not run anywhere in the conversation. */
+  opts: { availabilityChecked?: boolean } = {},
+): OutboundVerdict {
   const violations: string[] = [];
 
   if (CURRENCY_SYMBOL_RE.test(body)) {
@@ -106,6 +137,11 @@ export function screenOutbound(body: string, settings: TenantSettings): Outbound
   ];
   for (const re of promises) {
     if (re.test(body)) violations.push(`unauthorised promise: ${re.source}`);
+  }
+
+  // Times the calendar never returned: a customer turns up to nobody.
+  if (opts.availabilityChecked === false && SLOT_CHOICE_RE.test(body)) {
+    violations.push("offered appointment times without checking availability");
   }
 
   // A tool call the model typed into its reply instead of making it. Sent as

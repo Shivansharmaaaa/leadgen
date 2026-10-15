@@ -8,7 +8,7 @@ import { screenInbound, screenOutbound } from "@/server/core/guardrails";
 import type { Channel } from "@/server/core/types";
 import { buildSystemPrompt } from "./prompt";
 import { recall } from "@/server/memory/store";
-import { TOOL_DEFS, executeTool, type AgentContext } from "./tools";
+import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
 import { getProvider, type LlmHistory, type ToolSpec, LlmError } from "./providers";
 
 const MAX_TOOL_ITERATIONS = 6;
@@ -206,7 +206,9 @@ export async function runAgentTurn(opts: {
   // Gate 2: is the draft safe to send?
   let holdReason: string | undefined;
   if (finalText) {
-    const verdict = screenOutbound(finalText, tenant.settings ?? {});
+    const verdict = screenOutbound(finalText, tenant.settings ?? {}, {
+      availabilityChecked: await availabilityChecked(conversation.id, toolRecords),
+    });
     if (!verdict.allow) {
       holdReason = `guardrail: ${verdict.holdReason}`;
       toolRecords.push({
