@@ -8,9 +8,19 @@ python3 -m venv .venv && .venv/bin/pip install -r finetune/requirements.txt
 npm run finetune:data                       # fetch SGD, export prompt+tools, build the set
 .venv/bin/python finetune/fetch_base.py 3b  # only where huggingface.co is blocked
 .venv/bin/python finetune/train_lora.py --base data/finetune/base/llama3.2-3b --name r16-adamw
-.venv/bin/python finetune/export_ollama.py --run r16-adamw   # attaches the adapter to llama3.2:3b
+.venv/bin/python finetune/export_ollama.py --run r16-adamw --llama-cpp ~/src/llama.cpp  # merge -> GGUF -> Q4_K_M -> Ollama
 .venv/bin/python finetune/eval_actions.py --model leadgen-llama3.2-ft:r16-adamw
 OLLAMA_VOICE_MODEL=leadgen-llama3.2-ft:r16-adamw npm run eval -- --voice --tag r16-adamw
+```
+
+Exporting needs llama.cpp's converter and `llama-quantize`, because current
+Ollama accepts neither LoRA adapters nor Q4_K_M quantisation of safetensors,
+and a fine-tune is only comparable to its baseline at the same quantisation:
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse https://github.com/ggml-org/llama.cpp ~/src/llama.cpp
+git -C ~/src/llama.cpp sparse-checkout set --no-cone /convert_hf_to_gguf.py /conversion/ /gguf-py/
+brew install llama.cpp   # Mac: provides llama-quantize (Ollama's Linux build ships its own)
 ```
 
 With Hugging Face access, skip `fetch_base.py` and pass
@@ -18,6 +28,25 @@ With Hugging Face access, skip `fetch_base.py` and pass
 model page, then `hf auth login`).
 
 On an Apple Silicon Mac the trainer runs on the GPU (`mps`) with no flags.
+
+## Running it on a Mac
+
+Apple Silicon runs this on the GPU through PyTorch's `mps` backend with no
+flags. A full epoch over the packed set is ~3M tokens, most of it the ~2.4k-
+token system prompt each dialogue carries. The CPU box these results came
+from managed ~23 tokens/s, so it only ever trained on a slice. Mac throughput
+was not measured here; the trainer prints tokens/s from the first step, so
+start with a quarter epoch and a time cap and scale from what it reports:
+
+```bash
+.venv/bin/python finetune/train_lora.py --base meta-llama/Llama-3.2-3B-Instruct \
+  --name 3b-full --epochs 0.25 --max-minutes 90 --grad-accum 8 --lr 2e-4 --eval-every 25
+.venv/bin/python finetune/export_ollama.py --run 3b-full --llama-cpp ~/src/llama.cpp
+.venv/bin/python finetune/eval_actions.py --model leadgen-llama3.2-ft:3b-full --per-kind 6
+```
+
+Then point the voice line at it: `OLLAMA_VOICE_MODEL=leadgen-llama3.2-ft:3b-full`
+in `.env`, and re-run `npm run eval -- --voice` to compare with the stock build.
 
 ## What it learns from
 

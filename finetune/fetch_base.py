@@ -64,6 +64,21 @@ def download(size: str, dest: Path) -> Path:
     return path
 
 
+def drop_tokens_beyond_vocab(path: Path) -> None:
+    """
+    transformers' GGUF loader appends an `<|endoftext|>` at id 128256, one past
+    Llama 3.2's 128,256-row embedding. Nothing ever emits it, but llama.cpp's
+    converter rightly refuses a tokenizer that outruns the model, so drop it.
+    """
+    vocab_size = json.loads((path / "config.json").read_text())["vocab_size"]
+    tok_file = path / "tokenizer.json"
+    tok = json.loads(tok_file.read_text())
+    kept = [t for t in tok["added_tokens"] if t["id"] < vocab_size]
+    if len(kept) != len(tok["added_tokens"]):
+        tok["added_tokens"] = kept
+        tok_file.write_text(json.dumps(tok, ensure_ascii=False))
+
+
 def convert(gguf: Path, out: Path, keep_gguf: bool) -> None:
     import gc
 
@@ -79,6 +94,7 @@ def convert(gguf: Path, out: Path, keep_gguf: bool) -> None:
     model.config.quantization_config = None
     model.save_pretrained(out, safe_serialization=True)
     tok.save_pretrained(out)
+    drop_tokens_beyond_vocab(out)
 
     # Only drop the source once the copy reloads.
     del model
