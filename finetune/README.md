@@ -36,6 +36,21 @@ Splits are by dialogue: SGD's own train split trains; its dev and test splits
 are held out. Loss is taken only on the assistant's steps. Dialogues are packed
 so each one is read once with all its targets, rather than once per target.
 
+### Considered and left out
+
+- **Taskmaster** (Google, CC BY 4.0) has spoken two-person dialogues,
+  including auto-repair appointments, but no tool calls. It could only teach
+  style, and crowdsourced phrasing is the style the playbook is trying to
+  avoid (see `src/server/agent/playbook.ts`).
+- **MultiWOZ**: hotel and restaurant booking, further from the domain than
+  SGD's services and with less consistent annotation.
+- **Hugging Face / Kaggle** sets were unreachable from the environment this
+  was built in. With access, the obvious next additions are a large
+  function-calling corpus (e.g. `Salesforce/xlam-function-calling-60k`) mixed
+  in at a low ratio to keep general tool-use from narrowing, and real call
+  transcripts from the tenant's own inbox once there are enough of them —
+  the only data a competitor cannot copy.
+
 ## Knobs
 
 `train_lora.py` exposes the parts that change how the weights move:
@@ -46,4 +61,38 @@ gradient norm and held-out loss.
 
 ## Results
 
-See the bottom of this file; every number there came from a run in this repo.
+Every number here came from a run in this repo, on a 4-core x86 cloud CPU
+with no GPU (Intel AMX in use). Latencies on Apple Silicon are far lower;
+the ratios are what carry over.
+
+### Before training: the fixes that needed no weights
+
+`npm run eval`, llama3.2:3b, stock template, 20 scenarios:
+
+| | Baseline | After prompt + tool-call fixes |
+|---|---|---|
+| Scenarios passed | 13/20 (65%) | 18/20 (90%) |
+| Checks passed | 33/41 | 39/41 |
+| First word, p50 (voice scenarios) | 55.6 s | 22.8 s |
+| Turn latency, p50 | 53.1 s | 37.3 s |
+
+What moved it: the per-turn context moved behind the cacheable prompt (KV
+reuse went from 70 tokens to ~95% of the prompt), the playbook stopped
+carrying lines a 3B model repeats verbatim, malformed tool-call JSON is
+repaired instead of being sent, and a booking rule.
+
+### The template trade-off
+
+`npm run eval -- --voice` on the eight two-turn scenarios, turn-two first word:
+
+| Template | Passed | First word p50 |
+|---|---|---|
+| stock llama3.2:3b (tools in the last user message) | 7/8 | 23.5 s |
+| `models/leadgen-llama3.2.Modelfile` (tools in the system block) | 6/8 | 1.5 s |
+
+On the seven scenarios where both behaved the same, the cache-friendly layout
+spoke in 1.0-2.1 s against 22-29 s: the stock template moves ~1k tokens of
+tool schemas to the newest message every turn, so the whole conversation is
+re-read. The price is that the untuned model calls `check_availability` less
+often in that layout — which is exactly what the fine-tuning set teaches, in
+exactly that layout.
