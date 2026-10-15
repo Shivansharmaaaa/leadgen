@@ -35,10 +35,31 @@ const ANGER_MARKERS = [
 
 export type InboundVerdict = {
   escalate: boolean;
+  /** Asked whether this is a person or a bot: answer with disclosureReply(). */
+  disclose?: boolean;
   reason?: string;
   /** Matched phrase, for the audit log and the inbox banner. */
   trigger?: string;
 };
+
+/**
+ * "Am I talking to a real person?" is a legal question, not a conversational
+ * one: CA SB 1001 and the EU AI Act require a truthful answer. Fine-tuned for
+ * bookings, the 3B voice model answered "Yes, you are talking to a real
+ * person." Like identity extraction, this is not left to the model.
+ */
+const BEING = String.raw`(?:a\s+|an\s+)?(?:real\s+|actual\s+|live\s+)?(?:person|human|bot|robot|ai|a\.i\.|machine|computer|recording)\b`;
+const DISCLOSURE_QUESTION_RE = new RegExp(
+  String.raw`\b(?:are|r)\s+(?:you|u)\s+` + BEING +
+  String.raw`|\b(?:am\s+i|i'?m|i\s+am)\s+(?:talking|speaking|chatting)\s+(?:to|with)\s+` + BEING +
+  String.raw`|\bis\s+(?:this|that|it)\s+` + BEING,
+  "i",
+);
+
+export function disclosureReply(businessName: string): string {
+  return `I'm an AI assistant for ${businessName}. I can keep helping you, or have someone ` +
+    `from the team call you back, whichever you'd prefer.`;
+}
 
 /** Gate 1 — decide whether the AI should answer this at all. */
 export function screenInbound(body: string, settings: TenantSettings): InboundVerdict {
@@ -57,6 +78,12 @@ export function screenInbound(body: string, settings: TenantSettings): InboundVe
   const asked = text.match(HUMAN_REQUEST_RE);
   if (asked) {
     return { escalate: true, reason: "escalation_trigger", trigger: asked[0] };
+  }
+
+  // After escalation on purpose: "is this a bot? get me a human" is a handoff.
+  const asking = text.match(DISCLOSURE_QUESTION_RE);
+  if (asking) {
+    return { escalate: false, disclose: true, reason: "ai_disclosure", trigger: asking[0] };
   }
 
   const angerHits = ANGER_MARKERS.filter((m) => text.includes(m));
@@ -146,7 +173,9 @@ export function screenOutbound(
 
   // A tool call the model typed into its reply instead of making it. Sent as
   // text it is gibberish to the customer — and on a call it is read aloud.
-  if (/\{\s*"(?:name|function)"\s*:/.test(body)) {
+  // Also catches a leaked tool schema ({"type":"function",...}), which the
+  // untuned model once pasted into a reply.
+  if (/\{\s*"(?:name|function)"\s*:|\{\s*"type"\s*:\s*"function"/.test(body)) {
     violations.push("reply contains a raw tool call");
   }
 

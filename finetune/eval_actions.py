@@ -116,6 +116,8 @@ def main():
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--tag", default="")
     ap.add_argument("--mode", default="chat", choices=["chat", "raw"])
+    ap.add_argument("--kinds", help="comma-separated kinds to score, e.g. ai_disclosure,unknown_price")
+    ap.add_argument("--show", action="store_true", help="print each full output")
     args = ap.parse_args()
     tools = json.loads((ROOT / "data/finetune/prompt-kit.json").read_text())["tools"]
 
@@ -125,6 +127,9 @@ def main():
         by_kind[f"{r['source']}:{r['kind']}"].append(r)
     rng = random.Random(args.seed)
     sample = [r for k in sorted(by_kind) for r in rng.sample(by_kind[k], min(args.per_kind, len(by_kind[k])))]
+    if args.kinds:
+        wanted = set(args.kinds.split(","))
+        sample = [r for r in sample if r["kind"] in wanted]
     # Neighbours that share a prefix let Ollama reuse its KV cache.
     sample.sort(key=lambda r: r["prompt"])
 
@@ -152,6 +157,10 @@ def main():
             s["premature"] += any(c["name"] == "book_appointment" for c in (got or []))
         shown = " + ".join(c["name"] for c in got) if got else out[:90]
         print(f"  [{i}/{len(sample)}] {kind:34s} {shown!r}", flush=True)
+        if args.show:
+            last_user = next(m["content"] for m in reversed(r["messages"]) if m["role"] == "user")
+            print(f"      caller: {last_user!r}\n      wanted: {r['completion'][:160]!r}\n      got:    "
+                  f"{json.dumps(got) if got else out!r}")
 
     total = defaultdict(int)
     print(f"\n{'kind':38s} {'n':>3s} {'action':>7s} {'args':>6s} {'premature':>9s}")

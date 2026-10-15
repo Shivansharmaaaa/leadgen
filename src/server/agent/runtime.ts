@@ -4,7 +4,7 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound } from "@/server/core/guardrails";
+import { screenInbound, screenOutbound, disclosureReply } from "@/server/core/guardrails";
 import type { Channel } from "@/server/core/types";
 import { buildSystemPrompt } from "./prompt";
 import { recall } from "@/server/memory/store";
@@ -99,6 +99,25 @@ export async function runAgentTurn(opts: {
       await persistRun(tenant.id, conversation.id, opts.inboundMessageId, outcome, {
         inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
       }, "escalated");
+      return outcome;
+    }
+
+    // Asked whether this is a person: a truthful answer is a legal
+    // requirement, so it does not depend on what the model would say.
+    if (verdict.disclose) {
+      const outcome: AgentOutcome = {
+        reply: disclosureReply(tenant.settings?.businessName ?? tenant.name),
+        escalated: false,
+        toolCalls: [],
+        costUsd: 0,
+        latencyMs: Date.now() - started,
+        provider: provider.id,
+        model: provider.model,
+        productionGrade: provider.productionGrade,
+      };
+      await persistRun(tenant.id, conversation.id, opts.inboundMessageId, outcome, {
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
+      }, "replied");
       return outcome;
     }
   }

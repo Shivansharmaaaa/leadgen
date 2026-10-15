@@ -4,7 +4,7 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound } from "@/server/core/guardrails";
+import { screenInbound, screenOutbound, disclosureReply } from "@/server/core/guardrails";
 import { recall } from "@/server/memory/store";
 import { buildSystemPrompt } from "./prompt";
 import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
@@ -123,6 +123,28 @@ export async function* runVoiceTurn(opts: {
       yield {
         type: "done", fullText: "", latencyMs: Date.now() - started, firstWordMs: null,
         provider: "guardrail", model: "n/a",
+      };
+      return;
+    }
+
+    // Asked whether this is a person: answered truthfully without the model.
+    if (verdict.disclose) {
+      const text = disclosureReply(tenant.settings?.businessName ?? tenant.name);
+      yield { type: "sentence", text, msSinceStart: Date.now() - started };
+      await db.insert(messagesTable).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        direction: "outbound", channel: "voice", authorType: "ai", body: text, status: "sent",
+      });
+      await db.insert(agentRuns).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        inboundMessageId: opts.inboundMessageId ?? null,
+        model: "guardrail:disclosure", toolCalls: [],
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
+        latencyMs: Date.now() - started, costUsd: "0", outcome: "replied",
+      });
+      yield {
+        type: "done", fullText: text, latencyMs: Date.now() - started,
+        firstWordMs: Date.now() - started, provider: "guardrail", model: "disclosure",
       };
       return;
     }
