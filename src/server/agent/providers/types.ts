@@ -41,7 +41,10 @@ export type LlmTurn = {
 };
 
 export type CompleteRequest = {
+  /** Stable across turns, so providers can cache it as a prefix. */
   system: string;
+  /** Per-turn facts (clock, caller, memories), sent after the cached prefix. */
+  context?: string;
   history: LlmHistory;
   tools: ToolSpec[];
   maxTokens?: number;

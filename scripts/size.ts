@@ -11,7 +11,8 @@ async function main() {
   const knowledge = await loadKnowledge(tenant.id);
   const contact = { displayName: null, primaryPhone: null, primaryEmail: null, doNotContact: false } as never;
 
-  const system = buildSystemPrompt({ tenant, contact, location, channel: "webchat", knowledge });
+  const { system: stable, context } = buildSystemPrompt({ tenant, contact, location, channel: "webchat", knowledge });
+  const system = `${stable}\n\n${context}`;
   const toolsJson = JSON.stringify(TOOL_DEFS);
   const est = (s: string) => Math.ceil(s.length / 4);
   const total = est(system) + est(toolsJson);

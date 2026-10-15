@@ -20,7 +20,12 @@ export function getProvider(channel?: string): LlmProvider {
   const choice = explicit ?? (hasClaudeKey ? "anthropic" : "ollama");
 
   if (choice === "ollama") {
-    return new OllamaProvider();
+    // A smaller local model for voice: on a call, time-to-first-word matters
+    // more than the last few points of quality.
+    const model = channel === "voice"
+      ? process.env.OLLAMA_VOICE_MODEL ?? process.env.OLLAMA_MODEL
+      : process.env.OLLAMA_MODEL;
+    return new OllamaProvider(model);
   }
 
   const model =

@@ -108,6 +108,12 @@ export function screenOutbound(body: string, settings: TenantSettings): Outbound
     if (re.test(body)) violations.push(`unauthorised promise: ${re.source}`);
   }
 
+  // A tool call the model typed into its reply instead of making it. Sent as
+  // text it is gibberish to the customer — and on a call it is read aloud.
+  if (/\{\s*"(?:name|function)"\s*:/.test(body)) {
+    violations.push("reply contains a raw tool call");
+  }
+
   if (violations.length > 0) {
     return { allow: false, holdReason: violations.join("; "), violations };
   }

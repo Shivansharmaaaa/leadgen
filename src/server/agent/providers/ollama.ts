@@ -28,7 +28,7 @@ export class OllamaProvider implements LlmProvider {
       stream: false,
       options: { temperature: this.temperature, num_ctx: 8192 },
       messages: [
-        { role: "system", content: req.system },
+        { role: "system", content: systemContent(req) },
         ...toOllamaMessages(req.history),
       ],
       tools: req.tools.map((t) => ({
@@ -102,21 +102,30 @@ export class OllamaProvider implements LlmProvider {
       model: this.model,
       stream: true,
       options: { temperature: this.temperature, num_ctx: 8192 },
-      messages: [{ role: "system", content: req.system }, ...toOllamaMessages(req.history)],
+      messages: [{ role: "system", content: systemContent(req) }, ...toOllamaMessages(req.history)],
       tools: req.tools.map((t) => ({
         type: "function",
         function: { name: t.name, description: t.description, parameters: t.inputSchema },
       })),
     };
 
-    const res = await fetch(`${this.baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      throw new LlmError(
+        `Could not reach Ollama at ${this.baseUrl}. Is \`ollama serve\` running?`,
+        this.id, err,
+      );
+    }
     if (!res.ok || !res.body) {
-      throw new LlmError(`Ollama stream failed: ${res.status}`, this.id);
+      // Surfaces "model 'x' not found" rather than a bare status code.
+      throw new LlmError(`Ollama stream failed: ${res.status} ${await res.text()}`, this.id);
     }
 
     const reader = res.body.getReader();
@@ -188,6 +197,14 @@ type OllamaChatResponse = {
   eval_count?: number;
 };
 
+/**
+ * Context goes after the stable system text, never before it: Ollama reuses
+ * the KV cache only up to the first token that differs from the last request.
+ */
+function systemContent(req: CompleteRequest): string {
+  return req.context ? `${req.system}\n\n${req.context}` : req.system;
+}
+
 /** Small models sometimes emit arguments as a JSON string rather than an object. */
 function coerceArgs(args: unknown): Record<string, unknown> {
   if (args && typeof args === "object" && !Array.isArray(args)) {
@@ -240,7 +257,11 @@ export function salvageTextToolCall(
 ): { call: { name: string; input: Record<string, unknown> }; remainingText: string } | null {
   if (!text.includes("{") || !text.includes('"name"') && !text.includes('"function"')) return null;
 
-  for (const candidate of extractJsonObjects(text)) {
+  // Repair before extracting: a dropped `":` after the arguments key also
+  // throws off quote tracking, so brace matching on the raw text fails too.
+  const repaired = repairToolJson(text);
+
+  for (const candidate of extractJsonObjects(repaired)) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(candidate);
@@ -259,10 +280,20 @@ export function salvageTextToolCall(
 
     return {
       call: { name, input },
-      remainingText: text.replace(candidate, "").trim(),
+      remainingText: repaired.replace(candidate, "").trim(),
     };
   }
   return null;
+}
+
+/**
+ * Fix the near-JSON 3B models emit when they type a tool call as text, e.g.
+ *   {"name":"qualify_lead","parameters{"service":"AC repair"}}
+ * Only the key that introduces the arguments object is touched; anything
+ * else that fails to parse is still rejected.
+ */
+export function repairToolJson(text: string): string {
+  return text.replace(/"(parameters|arguments|input)\s*(?:"\s*)?:?\s*\{/g, '"$1":{');
 }
 
 /** Walk the string tracking brace depth so nested objects stay intact. */

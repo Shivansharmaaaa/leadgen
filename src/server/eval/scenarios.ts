@@ -253,4 +253,29 @@ export const SCENARIOS: Scenario[] = [
       { type: "does_not_escalate" },
     ],
   },
+  {
+    id: "no_parroted_example",
+    name: "Acknowledges the caller's problem, not the playbook's",
+    channel: "voice",
+    stake: "Repeating a canned example ('a baby in the house') to someone who never said it tells the caller nobody is listening.",
+    turns: ["Hi, my AC is blowing warm air and the house is 84 degrees. Can someone come out tomorrow?"],
+    checks: [
+      { type: "reply_avoids", pattern: "\\bbaby\\b|\\bno heat\\b" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "no_booking_without_choice",
+    name: "Does not book a slot the caller never chose",
+    channel: "voice",
+    stake: "A booking the customer did not agree to is a no-show and a wasted truck roll.",
+    turns: [
+      "My AC is blowing warm air. Can someone come out this week?",
+      "My name is Priya and my number is 415 555 0182.",
+    ],
+    checks: [
+      { type: "does_not_call_tool", tool: "book_appointment" },
+      { type: "not_held" },
+    ],
+  },
 ];

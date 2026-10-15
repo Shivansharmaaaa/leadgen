@@ -107,7 +107,7 @@ export async function runAgentTurn(opts: {
     loadKnowledge(tenant.id),
     recall(contact.id),
   ]);
-  const system = buildSystemPrompt({
+  const { system, context } = buildSystemPrompt({
     tenant, contact, location,
     channel: conversation.channel as Channel,
     knowledge,
@@ -134,7 +134,7 @@ export async function runAgentTurn(opts: {
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const turn = await provider.complete({ system, history: llmHistory, tools: toolSpecs });
+      const turn = await provider.complete({ system, context, history: llmHistory, tools: toolSpecs });
       totalIn += turn.usage.inputTokens;
       totalOut += turn.usage.outputTokens;
       totalCacheRead += turn.usage.cacheReadTokens;

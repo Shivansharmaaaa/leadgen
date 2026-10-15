@@ -1,13 +1,27 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { SCENARIOS } from "@/server/eval/scenarios";
 import { runEval } from "@/server/eval/runner";
 
 const GREEN = "\x1b[32m", RED = "\x1b[31m", DIM = "\x1b[2m", RESET = "\x1b[0m", BOLD = "\x1b[1m";
 
+/**
+ *   npm run eval                      every scenario on its own channel
+ *   npm run eval -- price             only scenarios whose id contains "price"
+ *   npm run eval -- --voice           every scenario as a phone call, through
+ *                                     the streaming path the live call uses
+ *   npm run eval -- --tag lora-r16    label the run in the saved JSON
+ */
 async function main() {
-  const only = process.argv[2];
-  const scenarios = only ? SCENARIOS.filter((s) => s.id.includes(only)) : SCENARIOS;
+  const args = process.argv.slice(2);
+  const voice = args.includes("--voice");
+  const tagAt = args.indexOf("--tag");
+  const tag = tagAt >= 0 ? args[tagAt + 1] : undefined;
+  const only = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--tag");
 
-  console.log(`\n${BOLD}LEADGEN EVAL${RESET}  —  ${scenarios.length} scenarios\n`);
+  let scenarios = only ? SCENARIOS.filter((s) => s.id.includes(only)) : SCENARIOS;
+  if (voice) scenarios = scenarios.map((s) => ({ ...s, channel: "voice" as const }));
+
+  console.log(`\n${BOLD}LEADGEN EVAL${RESET}  —  ${scenarios.length} scenarios${voice ? " (all as voice)" : ""}\n`);
 
   const report = await runEval("northside-hvac", scenarios);
 
@@ -38,9 +52,16 @@ async function main() {
   );
   console.log(
     `latency p50 ${report.p50LatencyMs}ms · p95 ${report.p95LatencyMs}ms · ` +
+    (report.p50FirstWordMs !== null ? `first word p50 ${report.p50FirstWordMs}ms · ` : "") +
     `cost $${report.totalCostUsd.toFixed(4)}`,
   );
-  console.log();
+
+  // Every run is kept so model and prompt changes can be compared afterwards.
+  mkdirSync("data/eval", { recursive: true });
+  const file = `data/eval/${new Date().toISOString().replace(/[:.]/g, "-")}` +
+    `_${report.model.replace(/[^a-z0-9.-]/gi, "_")}${tag ? `_${tag}` : ""}.json`;
+  writeFileSync(file, JSON.stringify({ tag, voice, ...report }, null, 2));
+  console.log(`${DIM}saved ${file}${RESET}\n`);
 
   process.exit(report.passRate >= 0.9 ? 0 : 1);
 }

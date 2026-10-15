@@ -43,7 +43,11 @@ export class AnthropicProvider implements LlmProvider {
         model: this.model,
         max_tokens: req.maxTokens ?? 2048,
         // Business facts and persona are stable across a conversation — cache them.
-        system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
+        // The per-turn context sits after the breakpoint so it cannot bust it.
+        system: [
+          { type: "text", text: req.system, cache_control: { type: "ephemeral" } },
+          ...(req.context ? [{ type: "text" as const, text: req.context }] : []),
+        ],
         output_config: { effort: this.effort },
         tools,
         messages: toAnthropicMessages(req.history),

@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, tenants, contacts, conversations, messages, leads, appointments } from "@/server/db";
 import { runAgentTurn, type AgentOutcome } from "@/server/agent/runtime";
+import { runVoiceTurn } from "@/server/agent/voice-turn";
 import { getProvider } from "@/server/agent/providers";
 import type { Check, Scenario } from "./scenarios";
 
@@ -12,6 +13,8 @@ export type ScenarioResult = {
   passed: boolean;
   reply: string | null;
   latencyMs: number;
+  /** Voice path only: time until the first token, which is what a caller hears. */
+  firstWordMs: number | null;
   costUsd: number;
   error?: string;
 };
@@ -27,6 +30,7 @@ export type EvalReport = {
   totalCostUsd: number;
   p50LatencyMs: number;
   p95LatencyMs: number;
+  p50FirstWordMs: number | null;
 };
 
 export async function runEval(tenantSlug = "northside-hvac", scenarios: Scenario[]): Promise<EvalReport> {
@@ -42,6 +46,7 @@ export async function runEval(tenantSlug = "northside-hvac", scenarios: Scenario
 
   const latencies = results.map((r) => r.latencyMs).sort((a, b) => a - b);
   const at = (q: number) => latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * q))] : 0;
+  const firstWords = results.flatMap((r) => r.firstWordMs ?? []).sort((a, b) => a - b);
   const checksTotal = results.reduce((s, r) => s + r.results.length, 0);
   const checksPassed = results.reduce((s, r) => s + r.results.filter((c) => c.passed).length, 0);
 
@@ -56,6 +61,7 @@ export async function runEval(tenantSlug = "northside-hvac", scenarios: Scenario
     totalCostUsd: results.reduce((s, r) => s + r.costUsd, 0),
     p50LatencyMs: at(0.5),
     p95LatencyMs: at(0.95),
+    p50FirstWordMs: firstWords.length ? firstWords[Math.floor(firstWords.length / 2)] : null,
   };
 }
 
@@ -71,6 +77,7 @@ async function runScenario(tenantId: string, scenario: Scenario): Promise<Scenar
   }).returning();
 
   let outcome: AgentOutcome | null = null;
+  let firstWordMs: number | null = null;
   let error: string | undefined;
 
   try {
@@ -80,6 +87,13 @@ async function runScenario(tenantId: string, scenario: Scenario): Promise<Scenar
         direction: "inbound", channel: scenario.channel,
         authorType: "contact", body: turn,
       }).returning();
+
+      // Spoken scenarios go through the streaming path a live call uses, which
+      // persists its own reply.
+      if (scenario.channel === "voice") {
+        ({ outcome, firstWordMs } = await collectVoiceTurn(conversation.id, msg.id));
+        continue;
+      }
 
       outcome = await runAgentTurn({
         conversationId: conversation.id,
@@ -113,9 +127,39 @@ async function runScenario(tenantId: string, scenario: Scenario): Promise<Scenar
     passed: results.every((r) => r.passed),
     reply: outcome?.reply ?? null,
     latencyMs: outcome?.latencyMs ?? 0,
+    firstWordMs,
     costUsd: outcome?.costUsd ?? 0,
     error,
   };
+}
+
+/** Drain the voice event stream into the same shape the checks grade. */
+async function collectVoiceTurn(
+  conversationId: string, inboundMessageId: string,
+): Promise<{ outcome: AgentOutcome; firstWordMs: number | null }> {
+  const provider = getProvider("voice");
+  const outcome: AgentOutcome = {
+    reply: null, escalated: false, toolCalls: [], costUsd: 0, latencyMs: 0,
+    provider: provider.id, model: provider.model, productionGrade: provider.productionGrade,
+  };
+  let firstWordMs: number | null = null;
+
+  for await (const ev of runVoiceTurn({ conversationId, inboundMessageId })) {
+    if (ev.type === "tool") {
+      outcome.toolCalls.push({ name: ev.name, input: {}, output: { ok: ev.ok }, ms: ev.ms });
+    } else if (ev.type === "escalated") {
+      outcome.escalated = true;
+    } else if (ev.type === "held") {
+      outcome.holdReason = `guardrail: ${ev.reason}`;
+    } else if (ev.type === "error") {
+      outcome.holdReason = `model error: ${ev.message}`;
+    } else if (ev.type === "done") {
+      outcome.reply = ev.fullText || null;
+      outcome.latencyMs = ev.latencyMs;
+      firstWordMs = ev.firstWordMs;
+    }
+  }
+  return { outcome, firstWordMs };
 }
 
 const MONEY = /[$£€]\s?(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/g;
