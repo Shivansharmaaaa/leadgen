@@ -53,45 +53,125 @@ export default function VoicePage() {
     window.speechSynthesis.speak(u);
   }, []);
 
+  /**
+   * Speak sentences in order as they stream in. Queued rather than fired
+   * immediately, because speechSynthesis will talk over itself otherwise.
+   */
+  const speakQueue = useRef<string[]>([]);
+  const speaking = useRef(false);
+
+  const drainQueue = useCallback(() => {
+    if (speaking.current) return;
+    const next = speakQueue.current.shift();
+    if (!next) return;
+    speaking.current = true;
+    const u = new SpeechSynthesisUtterance(next);
+    const voices = window.speechSynthesis.getVoices();
+    const preferred =
+      voices.find((v) => /Samantha|Ava|Allison|Serena|Zoe|Daniel/i.test(v.name)) ??
+      voices.find((v) => v.lang.startsWith("en"));
+    if (preferred) u.voice = preferred;
+    u.rate = 1.04;
+    u.onend = () => { speaking.current = false; drainQueue(); };
+    u.onerror = () => { speaking.current = false; drainQueue(); };
+    window.speechSynthesis.speak(u);
+  }, []);
+
   const send = useCallback(async (text: string) => {
     setTurns((t) => [...t, { who: "you", text }]);
     setThinking(true);
+    window.speechSynthesis?.cancel();
+    speakQueue.current = [];
+    speaking.current = false;
+
+    const tools: { name: string; ok: boolean; ms: number }[] = [];
+    let spoken = "";
+    let firstWordMs: number | null = null;
+    let agentIndex = -1;
+
     try {
-      const res = await fetch("/api/voice/turn", {
+      const res = await fetch("/api/voice/stream", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId: sessionIdRef.current, text }),
       });
-      const data = await res.json();
-
-      if (!res.ok) {
-        setTurns((t) => [...t, { who: "system", text: data.error ?? "request failed" }]);
+      if (!res.ok || !res.body) {
+        const message = await res.text();
+        setTurns((t) => [...t, { who: "system", text: message }]);
         return;
       }
 
-      setMeta({ provider: data.provider, model: data.model, productionGrade: data.productionGrade });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
 
-      if (data.reply) {
-        setTurns((t) => [...t, {
-          who: "agent", text: data.reply, tools: data.toolCalls,
-          latencyMs: data.latencyMs, held: data.held,
-        }]);
-        if (!data.held) speak(data.reply);
-      } else {
-        setTurns((t) => [...t, {
-          who: "system",
-          text: data.escalated
-            ? `Handed to a human${data.held ? ` — ${data.held}` : ""}. The AI stops here.`
-            : "No reply produced.",
-          tools: data.toolCalls, latencyMs: data.latencyMs,
-        }]);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        let nl: number;
+        while ((nl = buf.indexOf("\n\n")) >= 0) {
+          const raw = buf.slice(0, nl).replace(/^data: /, "").trim();
+          buf = buf.slice(nl + 2);
+          if (!raw) continue;
+
+          let ev: Record<string, unknown>;
+          try { ev = JSON.parse(raw); } catch { continue; }
+
+          if (ev.type === "sentence") {
+            const sentence = String(ev.text);
+            firstWordMs ??= Number(ev.msSinceStart);
+            spoken = spoken ? `${spoken} ${sentence}` : sentence;
+            speakQueue.current.push(sentence);
+            drainQueue();
+            setThinking(false);
+
+            // Grow one agent bubble rather than adding one per sentence.
+            setTurns((t) => {
+              const copy = [...t];
+              if (agentIndex === -1) {
+                agentIndex = copy.length;
+                copy.push({ who: "agent", text: sentence, tools, latencyMs: firstWordMs ?? undefined });
+              } else {
+                copy[agentIndex] = { ...copy[agentIndex], text: spoken };
+              }
+              return copy;
+            });
+          } else if (ev.type === "tool") {
+            tools.push({ name: String(ev.name), ok: Boolean(ev.ok), ms: Number(ev.ms) });
+          } else if (ev.type === "escalated") {
+            setTurns((t) => [...t, { who: "system", text: `Handed to a human — ${ev.reason}. The AI stops here.` }]);
+          } else if (ev.type === "held") {
+            setTurns((t) => {
+              const copy = [...t];
+              if (agentIndex >= 0) copy[agentIndex] = { ...copy[agentIndex], held: String(ev.reason) };
+              return copy;
+            });
+          } else if (ev.type === "done") {
+            setMeta({ provider: String(ev.provider), model: String(ev.model), productionGrade: false });
+            setTurns((t) => {
+              const copy = [...t];
+              if (agentIndex >= 0) {
+                copy[agentIndex] = {
+                  ...copy[agentIndex],
+                  tools,
+                  latencyMs: Number(ev.firstWordMs ?? ev.latencyMs),
+                };
+              }
+              return copy;
+            });
+          } else if (ev.type === "error") {
+            setTurns((t) => [...t, { who: "system", text: String(ev.message) }]);
+          }
+        }
       }
     } catch (err) {
       setTurns((t) => [...t, { who: "system", text: String(err) }]);
     } finally {
       setThinking(false);
     }
-  }, [speak]);
+  }, [drainQueue]);
 
   const toggleMic = useCallback(() => {
     const rec = recognitionRef.current;
@@ -207,7 +287,7 @@ function TurnRow({ turn }: { turn: Turn }) {
       {(turn.tools?.length || turn.latencyMs) && (
         <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, fontFamily: "ui-monospace, monospace" }}>
           {turn.tools?.map((t) => `${t.ok ? "✓" : "✗"} ${t.name} ${t.ms}ms`).join("  ")}
-          {turn.latencyMs ? `   ·   ${turn.latencyMs}ms total` : ""}
+          {turn.latencyMs ? `   ·   first word ${turn.latencyMs}ms` : ""}
         </div>
       )}
     </div>

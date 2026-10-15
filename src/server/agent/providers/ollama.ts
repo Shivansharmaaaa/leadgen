@@ -93,6 +93,84 @@ export class OllamaProvider implements LlmProvider {
     };
   }
 
+  /**
+   * Stream tokens as they are generated. Yields text deltas; returns the
+   * assembled turn when finished.
+   */
+  async *stream(req: CompleteRequest): AsyncGenerator<string, LlmTurn, undefined> {
+    const body = {
+      model: this.model,
+      stream: true,
+      options: { temperature: this.temperature, num_ctx: 8192 },
+      messages: [{ role: "system", content: req.system }, ...toOllamaMessages(req.history)],
+      tools: req.tools.map((t) => ({
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: t.inputSchema },
+      })),
+    };
+
+    const res = await fetch(`${this.baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok || !res.body) {
+      throw new LlmError(`Ollama stream failed: ${res.status}`, this.id);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let text = "";
+    const toolCalls: LlmToolCall[] = [];
+    let usage: LlmUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 };
+    let doneReason: string | undefined;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Ollama emits newline-delimited JSON, one object per token batch.
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+
+        let chunk: OllamaChatResponse;
+        try { chunk = JSON.parse(line) as OllamaChatResponse; } catch { continue; }
+
+        const delta = chunk.message?.content ?? "";
+        if (delta) { text += delta; yield delta; }
+
+        for (const [i, c] of (chunk.message?.tool_calls ?? []).entries()) {
+          toolCalls.push({
+            id: `ollama_${Date.now()}_${i}`,
+            name: c.function.name,
+            input: coerceArgs(c.function.arguments),
+          });
+        }
+        if (chunk.prompt_eval_count) usage.inputTokens = chunk.prompt_eval_count;
+        if (chunk.eval_count) usage.outputTokens = chunk.eval_count;
+        if (chunk.done_reason) doneReason = chunk.done_reason;
+      }
+    }
+
+    if (toolCalls.length === 0) {
+      const salvaged = salvageTextToolCall(text, req.tools.map((t) => t.name));
+      if (salvaged) { toolCalls.push({ id: `ollama_salvaged_${Date.now()}`, ...salvaged.call }); }
+    }
+
+    return {
+      text: text.trim(),
+      toolCalls,
+      stopReason: toolCalls.length > 0 ? "tool_use" : doneReason === "length" ? "max_tokens" : "end_turn",
+      usage,
+    };
+  }
+
   /** Local inference has no marginal API cost. Hardware time is not metered here. */
   costUsd(_u: LlmUsage): number {
     return 0;

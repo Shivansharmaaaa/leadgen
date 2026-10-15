@@ -54,6 +54,15 @@ export interface LlmProvider {
   /** False for local models — the UI warns that quality is not production-representative. */
   readonly productionGrade: boolean;
   complete(req: CompleteRequest): Promise<LlmTurn>;
+  /**
+   * Token stream for latency-sensitive channels.
+   *
+   * On a phone call the number that matters is time-to-first-audio, not
+   * time-to-complete-reply. Streaming lets the caller hear the first sentence
+   * while the rest is still being generated, which turns a 9-second wait into
+   * roughly a 1-second one without the model being any faster.
+   */
+  stream?(req: CompleteRequest): AsyncGenerator<string, LlmTurn, undefined>;
   costUsd(usage: LlmUsage): number;
 }
 

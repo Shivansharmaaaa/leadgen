@@ -12,9 +12,19 @@ type Location = typeof locations.$inferSelect;
 /** Per-channel style and hard length limits the platform imposes. */
 const CHANNEL_STYLE: Record<Channel, string> = {
   voice:
-    "You are SPEAKING on a live phone call. Write exactly what should be said aloud: " +
-    "no markdown, no lists, no emoji, no URLs. One or two short sentences per turn, " +
-    "then stop and let them talk. Spell out times naturally ('two thirty on Tuesday').",
+    "You are SPEAKING on a live phone call. Everything you write is read aloud by a " +
+    "text-to-speech voice, so write it the way a person actually talks:\n" +
+    "- Use contractions. 'I'll', 'we've', 'that's' — never 'I will', 'we have'.\n" +
+    "- One or two short sentences, then STOP and let them talk. Never monologue.\n" +
+    "- No markdown, no lists, no emoji, no URLs, no bullet points. None of it reads aloud.\n" +
+    "- Say numbers the way people say them: 'eighty-nine dollars', 'two thirty on Tuesday', " +
+    "'six and a half to twelve and a half thousand'.\n" +
+    "- Open with a short acknowledgement before the substance — 'Got it,' 'Okay,' " +
+    "'Right' — the way someone does on the phone.\n" +
+    "- React to what they said before moving on. 'Eighty-four degrees, that's rough.'\n" +
+    "- Never say 'As an AI' or 'I can assist you with that'. Say 'I can help with that'.\n" +
+    "- If you need to think, just answer. Do not narrate ('Let me check that for you...') " +
+    "unless you are genuinely calling a tool.",
   sms:
     "This is SMS. Under 300 characters. No markdown, no links unless essential. " +
     "Warm but brisk — people read these on a lock screen.",

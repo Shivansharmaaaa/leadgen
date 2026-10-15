@@ -9,6 +9,32 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
+ * Amazon Polly NEURAL voices, not the standard ones. The standard voices are
+ * the flat concatenative engine most IVR systems use and are instantly
+ * recognisable as a robot; the neural voices carry prosody and are the
+ * difference between "this is a bot" and "this might be a person".
+ *
+ * Danielle and Ruth are the most natural US English voices Polly offers.
+ */
+const VOICE = process.env.TWILIO_VOICE ?? "Polly.Danielle-Neural";
+
+/**
+ * Light SSML so delivery lands like speech rather than a read-aloud.
+ *
+ * Two things do most of the work: a beat after the greeting so the caller is
+ * not talked over, and a slight rate reduction, because TTS reads numbers and
+ * addresses faster than a person can absorb them.
+ */
+function speak(text: string): string {
+  const withPauses = escapeXml(text)
+    // A short beat after sentence ends, the way people breathe.
+    .replace(/([.!?])\s+/g, '$1<break time="350ms"/> ')
+    // Longer beat before a question, which reads as thinking.
+    .replace(/,\s+/g, ',<break time="150ms"/> ');
+  return `<prosody rate="96%">${withPauses}</prosody>`;
+}
+
+/**
  * Live inbound phone call, answered by the agent.
  *
  * Uses TwiML <Gather input="speech">: Twilio performs the speech-to-text and
@@ -62,18 +88,20 @@ export async function POST(req: Request) {
     const needsRecordingNotice =
       tenant.settings?.recordCalls && recordingDisclosureRequired(tenant.country, null);
 
+    // Disclosure first — legally required — but phrased the way a person
+    // would say it, not as a compliance notice bolted onto the front.
     const greeting =
-      `Thanks for calling ${businessName}. I'm an AI assistant` +
-      (needsRecordingNotice ? `, and this call is recorded` : "") +
-      `. How can I help you today?`;
+      `Hi, thanks for calling ${businessName}. You're through to an AI assistant` +
+      (needsRecordingNotice ? `, and just so you know, this call's recorded` : "") +
+      `. What can I help you with?`;
 
     return twiml(`
-      <Say voice="Polly.Joanna">${escapeXml(greeting)}</Say>
+      <Say voice="${VOICE}">${speak(greeting)}</Say>
       <Gather input="speech" speechTimeout="auto" language="en-US"
               action="/api/webhooks/twilio/voice" method="POST">
         <Pause length="3"/>
       </Gather>
-      <Say voice="Polly.Joanna">I didn't catch that. Please call back and we'll help.</Say>
+      <Say voice="${VOICE}">${speak("Sorry, I didn't catch that. Give us a call back and we'll get you sorted.")}</Say>
       <Hangup/>
     `);
   }
@@ -94,7 +122,7 @@ export async function POST(req: Request) {
   // Escalation or a held reply both mean: stop talking, get a human.
   if (outcome?.escalated || (outcome?.holdReason && !outcome.reply)) {
     return twiml(`
-      <Say voice="Polly.Joanna">Let me get a team member to help you with that. Someone will call you right back.</Say>
+      <Say voice="${VOICE}">${speak("Let me get a team member on this for you. Someone will call you right back.")}</Say>
       <Hangup/>
     `);
   }
@@ -103,12 +131,12 @@ export async function POST(req: Request) {
     ?? "Sorry, I didn't quite get that. Could you say it another way?";
 
   return twiml(`
-    <Say voice="Polly.Joanna">${escapeXml(reply)}</Say>
+    <Say voice="${VOICE}">${speak(reply)}</Say>
     <Gather input="speech" speechTimeout="auto" language="en-US"
             action="/api/webhooks/twilio/voice" method="POST">
       <Pause length="3"/>
     </Gather>
-    <Say voice="Polly.Joanna">Thanks for calling ${escapeXml(businessName)}. Goodbye.</Say>
+    <Say voice="${VOICE}">${speak(`Thanks for calling ${businessName}. Take care.`)}</Say>
     <Hangup/>
   `);
 }
