@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env
+.env.local
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+
+# Third-party dataset — fetched on demand, see scripts/fetch-data.sh
+data/

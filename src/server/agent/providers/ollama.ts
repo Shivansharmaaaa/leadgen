@@ -1,0 +1,218 @@
+import type {
+  CompleteRequest, LlmProvider, LlmTurn, LlmUsage, LlmToolCall,
+} from "./types";
+import { LlmError } from "./types";
+
+/**
+ * Local model via Ollama. Free, offline, and good enough to prove the pipeline
+ * end to end — ingest, identity resolution, tool execution, guardrails, booking.
+ *
+ * It is NOT quality-representative of production. An 8B local model follows
+ * tool schemas loosely and invents facts more readily, which is exactly the
+ * failure mode this product cannot ship. Use it to test plumbing; measure real
+ * reply quality on Claude.
+ */
+export class OllamaProvider implements LlmProvider {
+  readonly id = "ollama";
+  readonly productionGrade = false;
+
+  constructor(
+    readonly model = process.env.OLLAMA_MODEL ?? "llama3.1:latest",
+    private baseUrl = process.env.OLLAMA_URL ?? "http://localhost:11434",
+    private temperature = 0.2,
+  ) {}
+
+  async complete(req: CompleteRequest): Promise<LlmTurn> {
+    const body = {
+      model: this.model,
+      stream: false,
+      options: { temperature: this.temperature, num_ctx: 8192 },
+      messages: [
+        { role: "system", content: req.system },
+        ...toOllamaMessages(req.history),
+      ],
+      tools: req.tools.map((t) => ({
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: t.inputSchema },
+      })),
+    };
+
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      throw new LlmError(
+        `Could not reach Ollama at ${this.baseUrl}. Is \`ollama serve\` running?`,
+        this.id, err,
+      );
+    }
+
+    if (!res.ok) {
+      throw new LlmError(`Ollama returned ${res.status}: ${await res.text()}`, this.id);
+    }
+
+    const json = (await res.json()) as OllamaChatResponse;
+    const rawCalls = json.message?.tool_calls ?? [];
+    let text = (json.message?.content ?? "").trim();
+
+    const toolCalls: LlmToolCall[] = rawCalls.map((c, i) => ({
+      // Ollama does not issue call ids; synthesise stable ones for this turn.
+      id: `ollama_${Date.now()}_${i}`,
+      name: c.function.name,
+      input: coerceArgs(c.function.arguments),
+    }));
+
+    // Small models intermittently emit a tool call as literal JSON in the
+    // message body instead of in tool_calls. Left alone the call silently
+    // never runs and the raw JSON is shown to the customer. Salvage it.
+    if (toolCalls.length === 0) {
+      const salvaged = salvageTextToolCall(text, req.tools.map((t) => t.name));
+      if (salvaged) {
+        toolCalls.push({ id: `ollama_salvaged_${Date.now()}`, ...salvaged.call });
+        text = salvaged.remainingText;
+      }
+    }
+
+    return {
+      text,
+      toolCalls,
+      stopReason: toolCalls.length > 0 ? "tool_use"
+        : json.done_reason === "length" ? "max_tokens"
+        : "end_turn",
+      usage: {
+        inputTokens: json.prompt_eval_count ?? 0,
+        outputTokens: json.eval_count ?? 0,
+        cacheReadTokens: 0,
+      },
+      raw: json,
+    };
+  }
+
+  /** Local inference has no marginal API cost. Hardware time is not metered here. */
+  costUsd(_u: LlmUsage): number {
+    return 0;
+  }
+}
+
+type OllamaChatResponse = {
+  message?: {
+    role: string;
+    content?: string;
+    tool_calls?: { function: { name: string; arguments: unknown } }[];
+  };
+  done_reason?: string;
+  prompt_eval_count?: number;
+  eval_count?: number;
+};
+
+/** Small models sometimes emit arguments as a JSON string rather than an object. */
+function coerceArgs(args: unknown): Record<string, unknown> {
+  if (args && typeof args === "object" && !Array.isArray(args)) {
+    return args as Record<string, unknown>;
+  }
+  if (typeof args === "string") {
+    try {
+      const parsed = JSON.parse(args);
+      if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+    } catch {
+      /* fall through — the runtime validates and reports a tool error */
+    }
+  }
+  return {};
+}
+
+function toOllamaMessages(history: CompleteRequest["history"]) {
+  return history.map((entry) => {
+    if (entry.role === "user") return { role: "user", content: entry.content };
+    if (entry.role === "assistant") {
+      return {
+        role: "assistant",
+        content: entry.content,
+        ...(entry.toolCalls?.length
+          ? {
+              tool_calls: entry.toolCalls.map((tc) => ({
+                function: { name: tc.name, arguments: tc.input },
+              })),
+            }
+          : {}),
+      };
+    }
+    return { role: "tool", content: entry.content, tool_name: entry.name };
+  });
+}
+
+/**
+ * Recover a tool call the model wrote into its prose.
+ *
+ * Accepts the shapes small models actually produce:
+ *   {"name": "x", "parameters": {...}}
+ *   {"name": "x", "arguments": {...}}
+ *   {"function": {"name": "x", "arguments": {...}}}
+ * Only ever matches a name the model was actually offered, so arbitrary JSON
+ * in a customer message can never be turned into a tool invocation.
+ */
+export function salvageTextToolCall(
+  text: string,
+  allowedNames: string[],
+): { call: { name: string; input: Record<string, unknown> }; remainingText: string } | null {
+  if (!text.includes("{") || !text.includes('"name"') && !text.includes('"function"')) return null;
+
+  for (const candidate of extractJsonObjects(text)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") continue;
+
+    const obj = parsed as Record<string, unknown>;
+    const inner = (obj.function ?? obj) as Record<string, unknown>;
+    const name = typeof inner.name === "string" ? inner.name : null;
+    if (!name || !allowedNames.includes(name)) continue;
+
+    const rawArgs = inner.parameters ?? inner.arguments ?? inner.input ?? {};
+    const input = coerceArgs(rawArgs);
+
+    return {
+      call: { name, input },
+      remainingText: text.replace(candidate, "").trim(),
+    };
+  }
+  return null;
+}
+
+/** Walk the string tracking brace depth so nested objects stay intact. */
+function extractJsonObjects(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        out.push(text.slice(start, i + 1));
+        start = -1;
+      }
+      if (depth < 0) depth = 0;
+    }
+  }
+  return out;
+}
