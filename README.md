@@ -59,10 +59,12 @@ price question, and a legal escalation.
 npm run voice
 ```
 
-Checks Ollama, pulls `llama3.2:3b` if it is missing, builds the voice model
-from `models/leadgen-llama3.2.Modelfile`, confirms it makes real tool calls and
-runs on the GPU, brings up Postgres, seeds the demo tenant only if it is not
-there, and opens `/voice`. Use Chrome: the page uses its speech recognition.
+Checks Ollama, pulls `llama3.2:3b` if it is missing (the voice model), also
+builds the faster cache-friendly variant from `models/leadgen-llama3.2.Modelfile`,
+confirms the model makes real tool calls and runs on the GPU, brings up
+Postgres, seeds the demo tenant only if it is not there, and opens `/voice`.
+`finetune/README.md` has the measured trade-off between the two and how a
+LoRA fine-tune gets the speed without losing tool use. Use Chrome: the page uses its speech recognition.
 On Apple Silicon Ollama runs on the GPU (Metal) by itself.
 `npm run voice:check` re-runs just the model and database checks.
 

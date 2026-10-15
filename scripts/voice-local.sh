@@ -8,7 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE_MODEL="llama3.2:3b"
-VOICE_MODEL="leadgen-llama3.2:3b"
+# Stock is the most reliable untuned voice model; the cache-friendly build is
+# made too so it can be tried, and is what fine-tuned models are served with.
+VOICE_MODEL="llama3.2:3b"
+FAST_MODEL="leadgen-llama3.2:3b"
 OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
 
 step() { printf "\n\033[1m▸ %s\033[0m\n" "$*"; }
@@ -35,9 +38,9 @@ else
   ollama pull "$BASE_MODEL"
   ok "$BASE_MODEL installed"
 fi
-ollama create "$VOICE_MODEL" -f models/leadgen-llama3.2.Modelfile >/dev/null 2>&1 \
-  || die "could not build $VOICE_MODEL from models/leadgen-llama3.2.Modelfile"
-ok "built $VOICE_MODEL (tool schemas in the cached prefix)"
+ollama create "$FAST_MODEL" -f models/leadgen-llama3.2.Modelfile >/dev/null 2>&1 \
+  || die "could not build $FAST_MODEL from models/leadgen-llama3.2.Modelfile"
+ok "built $FAST_MODEL too (faster first word, needs fine-tuning for tool use)"
 
 step ".env"
 if [ ! -f .env ]; then cp .env.example .env; ok "created .env from .env.example"; fi

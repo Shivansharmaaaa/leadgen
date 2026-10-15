@@ -125,3 +125,57 @@ tool schemas to the newest message every turn, so the whole conversation is
 re-read. The price is that the untuned model calls `check_availability` less
 often in that layout — which is exactly what the fine-tuning set teaches, in
 exactly that layout.
+
+### The fine-tune
+
+One LoRA run on the 3B, time-boxed for a CPU: AdamW, lr 3e-4 with warmup and
+cosine decay, rank 16, alpha 32, all seven projection matrices (24.3M
+trainable parameters, 0.75%), gradient clipping at 1.0, 20 optimizer steps of
+2 packed dialogues each. That is 40 dialogues, about 4% of one epoch, in 80
+minutes. Held-out loss on assistant steps (same four rows, before and after):
+**1.629 → 0.509**. Served from Ollama as Q4_K_M, the same quantisation as the
+stock model, with the cache-friendly template.
+
+Held-out next action (`eval_actions.py`, 34 decisions, 2 per kind, through
+`/api/chat` exactly as the app calls it):
+
+| | stock | cache-friendly | cache-friendly + LoRA |
+|---|---|---|---|
+| Right next step (tool vs. reply, which tool) | 59% | 59% | **74%** |
+| ...with the right arguments (exact slot, date, details) | 47% | 59% | **71%** |
+| Premature bookings | 2 | 0 | 2 |
+
+The untuned models fail in opposite directions. Stock over-calls: it
+booked when the caller only gave a name and number. The cache-friendly
+layout under-calls: it never booked after an explicit yes. The LoRA fixed
+booking the exact chosen slot (0/4 → 4/4), recording the lead first
+(0/2 → 2/2) and saving details without booking (0/2 → 2/2). It also became
+more tool-eager where it saw few examples: SGD read-backs turned into
+bookings (2/2) and it stopped answering AI-disclosure and unknown-price
+questions in prose. With 2 rows per kind, single-kind swings are noise; the
+totals are 5 more correct decisions out of 34.
+
+All 21 scenarios as live calls (`npm run eval -- --voice`):
+
+| | stock | cache-friendly | cache-friendly + LoRA |
+|---|---|---|---|
+| Scenarios passed | 19/21 (90%)* | 16/21 (76%) | **20/21 (95%)** |
+| ...with the disclosure fix applied to all three | 19/21 | 17/21 | **21/21** |
+| First word, p50 | 21.7 s | 1.1 s | 12.7 s |
+
+\* The stock run came after the disclosure fix below, so its disclosure pass
+is Gate 1's. One of its two failures is the new invented-slot guard working:
+it offered two times without checking availability.
+
+The LoRA fixed every tool failure of the untuned layout (lead recorded on
+repair and emergency calls, availability checked before offering times). Its
+one failure was the worst kind: asked "am I talking to a real person?", it
+said yes. That question is now answered by Gate 1 with a fixed disclosure on
+every model, and the scenario passes. Its first word is slower than the
+untuned layout's because it now makes the tool call it should, then speaks;
+the untuned model was fast largely by skipping it.
+
+What a longer run should change: the set has only 27 disclosure, 35
+unknown-price and 48 escalation examples, so a 4%-of-an-epoch run barely sees
+them. A full epoch on a GPU, and more of those branches (`--hvac-dialogues`),
+is the next experiment.
