@@ -7,8 +7,9 @@
 # they move every turn and ~1k tokens are re-read before the first word. Here
 # they sit at the top of the system block, followed by the stable system
 # prompt and only then the conversation. Ollama reuses its KV cache up to the
-# first token that differs from the previous request, so on turn two onward it
-# only reads the new context and the new message.
+# first token that differs from the previous request, so after the first turn
+# it re-reads only from the per-turn context onward — the conversation so far,
+# not the ~2k tokens of tools, rules and facts above it.
 #
 # The tool-call format is unchanged, so Ollama's tool parsing still applies.
 # Fine-tuned builds reuse this file: finetune/export_ollama.py appends an
