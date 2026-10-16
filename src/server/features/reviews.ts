@@ -72,6 +72,7 @@ export async function sendReviewRequest(appointmentId: string): Promise<{ sent: 
       externalId: channel === "sms" ? contact.primaryPhone! : contact.primaryEmail!,
     },
     body,
+    initiated: true,
   });
 
   await db.insert(events).values({

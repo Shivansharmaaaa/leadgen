@@ -65,6 +65,11 @@ export type TenantSettings = {
    * cooling business: 'an answer' is almost certainly 'an AC'".
    */
   asrContext?: string;
+  /**
+   * Shared secret for POST /api/leads (web forms, Zapier, lead marketplaces).
+   * Unset means intake is off for this tenant.
+   */
+  intakeKey?: string;
 };
 
 export const locations = pgTable("locations", {
@@ -228,6 +233,8 @@ export const leads = pgTable("leads", {
   urgency: text("urgency"),
   estimatedValue: numeric("estimated_value", { precision: 12, scale: 2 }),
   sourceChannel: channelEnum("source_channel").notNull(),
+  /** Where the lead came from beyond its channel: "website", "google_lsa", "angi"... */
+  source: text("source"),
   summary: text("summary"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

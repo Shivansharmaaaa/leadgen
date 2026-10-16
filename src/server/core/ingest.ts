@@ -6,6 +6,7 @@ import {
 import type { InboundMessage, Channel } from "./types";
 import { resolveContact, linkIdentifierToContact } from "./identity";
 import { extractIdentifiers } from "./extract";
+import { detectConsentKeyword, optInConfirmation, optOutConfirmation } from "./opt-out";
 import { extractMemories } from "@/server/memory/extract";
 import { runAgentTurn, type AgentOutcome } from "@/server/agent/runtime";
 import { getAdapter } from "@/server/channels/registry";
@@ -121,6 +122,32 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
     messageId: stored.id,
   });
 
+  // 4c. STOP / START. Honoured before anything else can answer, and the
+  //     agent never sees the message: a chatty reply to "STOP" is exactly
+  //     what a TCPA plaintiff screenshots.
+  const consentKeyword = detectConsentKeyword(msg.body);
+  if (consentKeyword) {
+    const optingOut = consentKeyword.kind === "opt_out";
+    await db.update(contacts).set({ doNotContact: optingOut }).where(eq(contacts.id, contact.id));
+    await db.insert(events).values({
+      tenantId: msg.tenantId,
+      type: optingOut ? "opt_out" : "opt_in",
+      conversationId: conversation.id,
+      contactId: contact.id,
+      payload: { keyword: consentKeyword.keyword, channel: msg.channel, messageId: stored.id },
+    });
+    const businessName = tenantRow?.settings?.businessName ?? tenantRow?.name ?? "us";
+    // One confirmation is allowed, and expected, after a revocation.
+    const sent = await deliver({
+      tenantId: msg.tenantId,
+      conversationId: conversation.id,
+      channel: msg.channel,
+      to: msg.from,
+      body: optingOut ? optOutConfirmation(businessName) : optInConfirmation(businessName),
+    });
+    return { conversationId: conversation.id, contactId: contact.id, messageId: stored.id, duplicate: false, sent };
+  }
+
   // 5. A human has taken this thread — stay out of it.
   if (conversation.aiPaused) {
     return {
@@ -137,15 +164,21 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
     inboundMessageId: stored.id,
   });
 
-  // 7. Egress — unless a guardrail held it for review.
+  // 7. Egress — unless a guardrail held it for review. A lead that arrived
+  //    by form never messaged us on this channel, so the reply is the
+  //    business starting the thread and must pass the consent gate.
   let sent = false;
+  const firstTouch = msg.meta?.businessInitiated === true;
   if (outcome.reply && !outcome.holdReason) {
     sent = await deliver({
       tenantId: msg.tenantId,
       conversationId: conversation.id,
       channel: msg.channel,
       to: msg.from,
-      body: outcome.reply,
+      // Someone we are texting first does not know this number: say who it
+      // is and how to stop, in words the model cannot drop.
+      body: firstTouch ? frameFirstTouch(outcome.reply, msg.meta!) : outcome.reply,
+      initiated: firstTouch,
     });
   } else if (outcome.reply && outcome.holdReason) {
     // Draft is kept so a human can approve or edit it in the inbox.
@@ -187,6 +220,12 @@ export async function deliver(args: {
   body: string;
   authorType?: "ai" | "human";
   authorStaffId?: string;
+  /**
+   * The business is starting this contact rather than replying to one. The
+   * adapter's consent gate only applies to these; without the flag it never
+   * ran, so every send was treated as a service reply.
+   */
+  initiated?: boolean;
 }): Promise<boolean> {
   const adapter = getAdapter(args.channel);
 
@@ -210,6 +249,7 @@ export async function deliver(args: {
     channel: args.channel,
     to: args.to,
     body: truncate(args.body, adapter.maxLength),
+    meta: { initiated: args.initiated === true },
   };
 
   if (adapter.canSend) {
@@ -293,6 +333,12 @@ async function findOrCreateConversation(args: {
     })
     .returning();
   return created;
+}
+
+function frameFirstTouch(reply: string, meta: Record<string, unknown>): string {
+  const intro = typeof meta.intro === "string" ? meta.intro : "";
+  const footer = typeof meta.footer === "string" ? meta.footer : "";
+  return [intro, reply, footer].filter(Boolean).join(" ");
 }
 
 function truncate(body: string, max?: number): string {

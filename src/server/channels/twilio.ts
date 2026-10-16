@@ -33,11 +33,13 @@ export const smsAdapter: ChannelAdapter = {
     const contact = await db.query.contacts.findFirst({
       where: and(eq(contacts.tenantId, msg.tenantId), eq(contacts.primaryPhone, msg.to.externalId)),
     });
-    if (!contact) return { ok: true }; // replying to an unknown inbound is a service message
+    const initiated = msg.meta?.initiated === true;
+    // Starting contact with someone we hold no record of means no consent on file.
+    if (!contact) return initiated ? { ok: false, reason: "no contact record, so no SMS consent on file" } : { ok: true };
 
     // A reply inside an open conversation is a service message and is exempt;
     // this gate exists for business-initiated sends.
-    if (msg.meta?.initiated !== true) return { ok: true };
+    if (!initiated) return { ok: true };
 
     return canInitiateOutbound("sms", contact);
   },
