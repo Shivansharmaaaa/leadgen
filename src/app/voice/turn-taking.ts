@@ -61,16 +61,18 @@ export function endpointDelayMs(interim: string): number {
   const words = t.split(/\s+/);
   if (words.length < 3) return Infinity; // too little to guess from
 
-  // Still clearly mid-sentence — give them room.
-  if (TRAILING_INCOMPLETE.test(t) || HESITATION.test(t)) return 1200;
+  // Still clearly mid-sentence — give them plenty of room.
+  if (TRAILING_INCOMPLETE.test(t) || HESITATION.test(t)) return 1600;
 
   // A question is a strong finish signal: the caller is handing over.
   if (/\?$/.test(t) || /^(?:what|when|where|who|why|how|can|could|do|does|did|is|are|will|would|should)\b/i.test(t)) {
-    return 200;
+    return 450;
   }
 
   // Ends on a noun-ish word with enough length to be a complete thought.
-  if (words.length >= 5) return 300;
+  // Erring long: being cut off mid-sentence is far more annoying than
+  // waiting an extra beat, and the guess costs nothing while it waits.
+  if (words.length >= 6) return 700;
 
-  return 500;
+  return 900;
 }

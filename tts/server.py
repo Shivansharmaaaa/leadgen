@@ -24,7 +24,7 @@ SAMPLE_RATE = 24000
 # Kokoro's default lands above a conversational pace. Natural conversational
 # English runs 130-150 words per minute; this brings it into that band without
 # sounding laboured.
-DEFAULT_SPEED = float(os.environ.get("TTS_SPEED", "0.78"))
+DEFAULT_SPEED = float(os.environ.get("TTS_SPEED", "0.85"))
 
 # Openers the agent says constantly. Synthesised once at startup so the first
 # thing a caller hears costs a dictionary lookup rather than ~800ms of GPU.

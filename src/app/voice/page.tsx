@@ -33,6 +33,19 @@ export default function VoicePage() {
   const inflight = useRef<AbortController | null>(null);
   /** The utterance a speculative request was started for. */
   const speculatedFor = useRef<string | null>(null);
+  /**
+   * Sentences produced by a speculative turn, held back until the transcript
+   * confirms the guess.
+   *
+   * Speculation is meant to hide latency by having the answer READY, not by
+   * answering early. Speaking on a guess meant the agent talked over the
+   * caller mid-sentence and then stopped and restarted when the real
+   * transcript landed — worse than the delay it was avoiding.
+   */
+  const heldSentences = useRef<string[]>([]);
+  const speculationLive = useRef(false);
+  /** Set once the transcript confirms the guess; the held answer is released. */
+  const speculationConfirmed = useRef(false);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -192,8 +205,19 @@ export default function VoicePage() {
     const controller = new AbortController();
     inflight.current = controller;
 
-    setTurns((t) => [...t, { who: "you", text }]);
-    setThinking(true);
+    if (opts.speculative) {
+      heldSentences.current = [];
+      speculationLive.current = true;
+      speculationConfirmed.current = false;
+    } else {
+      speculationLive.current = false;
+      speculationConfirmed.current = false;
+    }
+
+    if (!opts.speculative) {
+      setTurns((t) => [...t, { who: "you", text }]);
+      setThinking(true);
+    }
 
     /**
      * Thinking filler.
@@ -205,10 +229,12 @@ export default function VoicePage() {
      */
     if (fillerTimer.current) clearTimeout(fillerTimer.current);
     let spokeFiller = false;
-    fillerTimer.current = setTimeout(() => {
-      spokeFiller = true;
-      enqueueSpeech(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
-    }, 700);
+    if (!opts.speculative) {
+      fillerTimer.current = setTimeout(() => {
+        spokeFiller = true;
+        enqueueSpeech(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
+      }, 700);
+    }
     const cancelFiller = () => {
       if (fillerTimer.current) { clearTimeout(fillerTimer.current); fillerTimer.current = null; }
     };
@@ -253,11 +279,18 @@ export default function VoicePage() {
           if (ev.type === "sentence") {
             cancelFiller();
             const sentence = String(ev.text);
+            if (opts.speculative && !speculationConfirmed.current) {
+              // Ready, not spoken. Released only once the caller is confirmed
+              // to have said what we guessed.
+              heldSentences.current.push(sentence);
+              continue;
+            }
             firstWordMs ??= Number(ev.msSinceStart);
             spoken = spoken ? `${spoken} ${sentence}` : sentence;
             enqueueSpeech(sentence);
             setThinking(false);
 
+            setThinking(false);
             // Grow one agent bubble rather than adding one per sentence.
             setTurns((t) => {
               const copy = [...t];
@@ -312,6 +345,21 @@ export default function VoicePage() {
 
   const normalise = (t: string) => t.trim().toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ");
 
+  /**
+   * The caller said what we guessed. Show their turn, speak whatever the
+   * speculative run already produced, and let the rest of that same stream
+   * speak as it arrives — so the work done while they were still talking is
+   * exactly the latency saved.
+   */
+  const releaseSpeculation = useCallback((text: string) => {
+    speculationConfirmed.current = true;
+    setTurns((t) => [...t, { who: "you", text }]);
+    const held = heldSentences.current;
+    heldSentences.current = [];
+    for (const sentence of held) enqueueSpeech(sentence);
+    if (held.length > 0) setThinking(false);
+  }, [enqueueSpeech]);
+
   const startListening = useCallback(() => {
     const rec = recognitionRef.current;
     if (!rec) return;
@@ -355,12 +403,17 @@ export default function VoicePage() {
         // let it finish rather than starting again.
         if (speculatedFor.current && normalise(speculatedFor.current) === normalise(text)) {
           speculatedFor.current = null;
+          releaseSpeculation(text);
           return;
         }
         // Otherwise the guess was wrong (or there was none): drop it and run
         // the real thing.
+        // The guess was wrong: throw it away, including anything it had
+        // ready to say, and run the real utterance.
         inflight.current?.abort();
+        heldSentences.current = [];
         speculatedFor.current = null;
+        speculationConfirmed.current = false;
         void send(text);
         return;
       }
