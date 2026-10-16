@@ -214,6 +214,17 @@ def main():
 
     inner = model.get_base_model()
 
+    def release_cache():
+        """
+        Hand freed GPU blocks back to the OS. On Apple GPUs memory is shared
+        with the system, and PyTorch's allocator keeps every freed block cached
+        for reuse. With ~1,200 different sequence lengths that cache only
+        grows: the 3B reached a 17 GB footprint on an 18 GB Mac, swapped, and
+        trained at half speed. Its real working set is ~9 GB.
+        """
+        if device.type == "mps":
+            torch.mps.empty_cache()
+
     def target_loss(ids: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """Mean next-token loss over the labelled positions, as HF computes it,
         projecting to the vocabulary only where there is a label."""
@@ -229,6 +240,7 @@ def main():
         with torch.no_grad():
             for ids, labels in valid:
                 losses.append(target_loss(ids, labels).item())
+                release_cache()
         model.train()
         return sum(losses) / len(losses)
 
@@ -291,6 +303,8 @@ def main():
                 loss = target_loss(ids, labels) / args.grad_accum
                 loss.backward()
                 step_loss += loss.item()
+                del loss
+                release_cache()
                 seen_tokens += len(ids)
                 run_tokens += len(ids)
 
