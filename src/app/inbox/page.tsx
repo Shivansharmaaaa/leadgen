@@ -55,6 +55,10 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
               {conversation.aiPaused && <Badge tone="warn">human has this thread</Badge>}
               <TakeoverButton conversationId={conversation.id} aiPaused={conversation.aiPaused} />
+              {contact?.primaryPhone && !contact.doNotContact && (
+                // A lead that couldn't be texted (no written consent) can still be phoned by a person.
+                <a href={`tel:${contact.primaryPhone}`} style={{ fontSize: 12, color: "var(--accent)" }}>call {contact.primaryPhone}</a>
+              )}
               {contact?.smsConsent && <Badge tone="ok">SMS consent</Badge>}
               {contact?.doNotContact && <Badge tone="danger">do not contact</Badge>}
               {contact && <EraseButton contactId={contact.id} name={contact.displayName ?? contact.primaryPhone ?? contact.primaryEmail ?? "this person"} />}

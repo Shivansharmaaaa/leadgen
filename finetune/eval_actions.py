@@ -35,7 +35,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BOS = "<|begin_of_text|>"
-NO_BOOK_KINDS = {"readback_no_booking", "save_details_not_book", "ask_which_time", "offer_two_times"}
+# Steps where booking is wrong. The conversion kinds matter most: booking
+# straight after "I'll pass for now", or mid-objection, is the pushy failure
+# the conversion set exists to train out.
+NO_BOOK_KINDS = {
+    "readback_no_booking", "save_details_not_book", "ask_which_time", "offer_two_times",
+    "accept_no_gracefully", "objection_price", "objection_delay", "objection_competition",
+    "objection_browsing", "objection_trust",
+}
 
 
 def generate(base: str, model: str, prompt: str) -> str:
