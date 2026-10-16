@@ -81,6 +81,37 @@ quality. Set a key and it switches:
 ANTHROPIC_API_KEY=sk-ant-...   # or: LLM_PROVIDER=anthropic
 ```
 
+## Getting leads in, answering them, and handing them on
+
+Everything below is configured per business at **`/settings`** (behind
+sign-in), and each piece has its own test suite that runs without a model
+(`LLM_PROVIDER=scripted`) and without sending anything real.
+
+| Feature | Where | What it does |
+|---|---|---|
+| **Lead intake** | `POST /api/leads?tenant=<slug>`, header `x-intake-key` | Web forms, Zapier, Google LSA, Angi, Thumbtack, Facebook lead ads. Every lead gets the agent's reply in seconds: by text if the form's consent wording names the business, covers texts and says consent isn't a condition of purchase; otherwise by email, or held for a person. The dashboard says exactly what the form's wording is missing. |
+| **Website chat** | `<script src="…/widget.js" data-tenant="…">` | A chat bubble on the client's own site, answered by the same agent. Says it is an AI; a reply a person sends from the inbox reaches the visitor. Rate-limited per session and per IP; only the client's own sites may embed it. Demo: `/widget-demo.html`. |
+| **Email** | SMTP out; inbound parse → `/api/webhooks/email?token=…` | Threaded replies, quoted text stripped, never answers an auto-reply (no AI ↔ out-of-office loops). |
+| **STOP / opt-out** | every channel | STOP, UNSUBSCRIBE or "please stop texting me" is honoured by rule, before the agent sees it; on a call only an explicit "don't call me again" counts. |
+| **Reminders** | automatic on every booking | Day before and same day (never outside 8am–8pm local), plus a written confirmation for bookings made on a call. Reply C to confirm, R to reschedule (a person finds the new time). |
+| **Team alerts** | automatic on every handover | Texts staff: emergencies (gas smell, CO alarm) to whoever is on call at any hour; other handovers during opening hours; after-hours non-urgent ones wait for opening. Someone who smells gas is first told to leave and call 911. |
+| **Conversation scoring** | `/dashboard` | Every conversation's outcome and what was missed: asked for a time and never offered one, price question dodged, reply stuck in review, handover nobody answered, and more, each with the line that raised it. |
+| **CRM webhooks** | `/settings` → Send to your CRM | New leads, bookings, confirmations, reschedules, handovers and opt-outs POSTed as signed JSON (`x-leadgen-signature`, HMAC-SHA256, replay-proof) to a CRM, Zapier or Make. Retries with backoff. |
+| **Owner sign-in** | `/login` | `/dashboard`, `/inbox`, `/settings` and the inbox API need `ADMIN_PASSWORD`. Open in development; refused in production until it is set. |
+
+### Setting them up
+
+```bash
+# .env
+ADMIN_PASSWORD=...          # required in production
+SMTP_HOST=... EMAIL_FROM=... # email out; EMAIL_INBOUND_TOKEN=... for email in
+TWILIO_ACCOUNT_SID=... TWILIO_AUTH_TOKEN=...   # texts, alerts, calls
+```
+
+Then at `/settings`: add the team's mobiles (and who is on call), create an
+intake key, paste the chat snippet on the website and list the site, and add
+a CRM endpoint. Run `npm run worker` so reminders, alerts and webhooks go out.
+
 ## Commands
 
 | Command | What it does |
@@ -98,6 +129,15 @@ ANTHROPIC_API_KEY=sk-ant-...   # or: LLM_PROVIDER=anthropic
 | `npm run voice` | Check the local model + database, start the app, open `/voice` |
 | `npm run eval -- --voice` | Every scenario as a phone call, through the streaming voice path |
 | `npm run finetune:data` | Build the LoRA set (SGD + in-domain); see `finetune/README.md` |
+| `npm run intake:test` | Lead intake, consent wording, STOP handling, SLA (no model, no sends) |
+| `npm run reminders:test` | Reminder scheduling, sending hours, C/R replies, double-booking guard |
+| `npm run alerts:test` | Gate 1 matching, safety replies, who gets alerted when |
+| `npm run scoring:test` | Every missed-opportunity flag on its case and its look-alike |
+| `npm run webchat:test` | Chat API, polling, rate limits, CORS |
+| `npm run webhooks:test` | Signing, the private-network guard, delivery to a real receiver |
+| `npm run email:test` | Email in and out through a real SMTP conversation |
+| `npm run auth:test` / `settings:test` | Sign-in, middleware, and every settings rule |
+| `npm run imports:test` | Loads every entry point first, each in a fresh process (catches import cycles) |
 
 ## Status
 
@@ -124,8 +164,9 @@ book anyway. The return is in the *persuadables*, so outreach ranks by
 holdout is also the client's ROI proof, reported with a 95% confidence
 interval that says "not yet proven" when it crosses zero.
 
-**Not built:** human takeover/reply from the inbox, real telephony media
-pipeline, federated training with differential privacy.
+**Not built yet:** per-user accounts across several businesses (one owner
+password per deployment for now), calendar sync with ServiceTitan / Jobber /
+Google Calendar (the webhooks are the bridge until then), and billing.
 
 ## Things deliberately NOT built
 
