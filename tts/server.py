@@ -21,6 +21,11 @@ PORT = int(os.environ.get("TTS_PORT", "8787"))
 DEFAULT_VOICE = os.environ.get("TTS_VOICE", "af_heart")
 SAMPLE_RATE = 24000
 
+# Kokoro's default lands above a conversational pace. Natural conversational
+# English runs 130-150 words per minute; this brings it into that band without
+# sounding laboured.
+DEFAULT_SPEED = float(os.environ.get("TTS_SPEED", "0.78"))
+
 # Openers the agent says constantly. Synthesised once at startup so the first
 # thing a caller hears costs a dictionary lookup rather than ~800ms of GPU.
 # Must stay in step with PREFIX_RULES in src/server/agent/fast-path.ts.
@@ -48,7 +53,7 @@ WARM_PHRASES = [
     "Let me get a colleague to help you with that — someone will call you right back.",
 ]
 
-CACHE: dict[tuple[str, str], bytes] = {}
+CACHE: dict[tuple[str, str, float], bytes] = {}
 CACHE_LIMIT = 256
 
 device = "mps" if torch.backends.mps.is_available() else "cpu"
@@ -86,14 +91,14 @@ def trim_silence(audio: "np.ndarray", threshold: float = 0.0025) -> "np.ndarray"
     return audio[max(0, first - pad):min(len(audio), last + pad)]
 
 
-def synth(text: str, voice: str) -> bytes:
-    key = (text, voice)
+def synth(text: str, voice: str, speed: float = DEFAULT_SPEED) -> bytes:
+    key = (text, voice, round(speed, 2))
     hit = CACHE.get(key)
     if hit is not None:
         return hit
 
     with _GPU_LOCK:
-        chunks = [c[2] for c in PIPELINE(text, voice=voice)]
+        chunks = [c[2] for c in PIPELINE(text, voice=voice, speed=speed)]
     if not chunks:
         return b""
     audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
@@ -128,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/health"):
             body = json.dumps({"ok": True, "device": device, "voice": DEFAULT_VOICE,
-                               "cached": len(CACHE)}).encode()
+                               "speed": DEFAULT_SPEED, "cached": len(CACHE)}).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self._cors(); self.send_header("content-length", str(len(body)))
@@ -144,11 +149,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length) or b"{}")
             text = (payload.get("text") or "").strip()
             voice = payload.get("voice") or DEFAULT_VOICE
+            speed = float(payload.get("speed") or DEFAULT_SPEED)
             if not text:
                 self.send_response(400); self._cors(); self.end_headers(); return
 
             t0 = time.time()
-            wav = synth(text, voice)
+            wav = synth(text, voice, speed)
             ms = int((time.time() - t0) * 1000)
 
             self.send_response(200)
@@ -168,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     _w = time.time()
     for phrase in WARM_PHRASES:
-        synth(phrase, DEFAULT_VOICE)
+        synth(phrase, DEFAULT_VOICE, DEFAULT_SPEED)
     print(f"[tts] pre-rendered {len(WARM_PHRASES)} openers in {time.time() - _w:.1f}s", flush=True)
     print(f"[tts] listening on http://127.0.0.1:{PORT}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

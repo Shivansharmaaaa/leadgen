@@ -90,6 +90,25 @@ export default function VoicePage() {
    * arrives, so only the first one ever waits — and the common openers are
    * pre-rendered server-side, so usually not even that.
    */
+  /**
+   * Prosodic pauses.
+   *
+   * Butting clips straight together removed the natural breaks in speech and
+   * made the agent sound rushed. Human speech pauses roughly 100-300ms at a
+   * comma or clause boundary and longer at a full stop, so the gap before the
+   * next clip is set by the punctuation the previous one ended on. These are
+   * deliberate and consistent, unlike the arbitrary padding the model emits,
+   * which is still trimmed.
+   */
+  const PAUSE_AFTER = (sentence: string): number => {
+    const end = sentence.trim().slice(-1);
+    if (end === "." || end === "!") return 0.30;
+    if (end === "?") return 0.34;   // a question hands over; leave a beat longer
+    if (end === "," || end === ";" || end === ":") return 0.14;
+    if (end === "—" || end === "-") return 0.18;
+    return 0.22;
+  };
+
   const audioCtx = useRef<AudioContext | null>(null);
   const nextStartAt = useRef(0);
   const scheduled = useRef<AudioBufferSourceNode[]>([]);
@@ -147,7 +166,7 @@ export default function VoicePage() {
         // Start where the last clip ends, or now if the queue has drained.
         const startAt = Math.max(ac.currentTime + 0.02, nextStartAt.current);
         src.start(startAt);
-        nextStartAt.current = startAt + buffer.duration;
+        nextStartAt.current = startAt + buffer.duration + PAUSE_AFTER(text);
 
         scheduled.current.push(src);
         src.onended = () => {
