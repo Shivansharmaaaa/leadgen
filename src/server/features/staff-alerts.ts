@@ -5,6 +5,7 @@ import {
   db, staff, contacts, conversations, events, jobs, leads, locations, messages, tenants,
   type BusinessHours,
 } from "@/server/db";
+import { normalizePhone } from "@/server/core/phone";
 import { screenInbound } from "@/server/core/guardrails";
 import { resolveFromNumber, twilioClient } from "@/server/channels/twilio";
 
@@ -180,4 +181,69 @@ export function nextOpening(after: Date, hours: BusinessHours[], tz: string): Da
     }
   }
   return null;
+}
+
+/** A text to one staff member from the business number; never enters a customer thread. */
+export async function textStaff(tenantId: string, to: string, body: string): Promise<{ ok: boolean; error?: string }> {
+  const client = twilioClient();
+  const from = await resolveFromNumber(tenantId);
+  if (!client || !from) return { ok: false, error: "Twilio not configured" };
+  try {
+    await client.messages.create({ to, from, body });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "send failed" };
+  }
+}
+
+const CLAIM = /^\s*(?:1|ok(?:ay)?|on it|got it|mine|i'?ll take it|taking it|claim(?:ed)?|yes)\b/i;
+
+/**
+ * A text from a team member's phone to the business number. Alerts come from
+ * that number, so "on it" is the natural reply, and before this it went
+ * through normal ingest: the tech became a "customer" and the AI chatted to
+ * them. Staff messages never reach the agent. Replying 1 / "on it" to an
+ * alert takes that conversation off the AI and records who has it.
+ */
+export async function handleStaffText(args: {
+  tenantId: string; staffId: string; staffPhone: string; staffName: string; body: string;
+}): Promise<{ claimed: string | null; reply: string }> {
+  const recent = await db.query.events.findMany({
+    where: and(eq(events.tenantId, args.tenantId), eq(events.type, "staff_alert"),
+      gte(events.createdAt, new Date(Date.now() - 12 * 3600_000))),
+    orderBy: desc(events.createdAt),
+    limit: 50,
+  });
+  const mine = recent.find((e) =>
+    ((e.payload.recipients as { staffId?: string }[] | undefined) ?? []).some((r) => r.staffId === args.staffId));
+  const app = (process.env.APP_URL ?? "").replace(/\/$/, "");
+
+  let claimed: string | null = null;
+  let reply: string;
+  if (mine?.conversationId && CLAIM.test(args.body)) {
+    await db.update(conversations).set({ aiPaused: true }).where(eq(conversations.id, mine.conversationId));
+    await db.insert(events).values({
+      tenantId: args.tenantId, type: "alert_claimed", conversationId: mine.conversationId,
+      payload: { staffId: args.staffId, by: args.staffName },
+    });
+    claimed = mine.conversationId;
+    const convo = await db.query.conversations.findFirst({ where: eq(conversations.id, mine.conversationId) });
+    const who = convo ? await db.query.contacts.findFirst({ where: eq(contacts.id, convo.contactId) }) : null;
+    reply = `Got it, ${who?.displayName ?? "that customer"} is yours; the AI has stepped back.` +
+      (who?.primaryPhone ? ` Their number: ${who.primaryPhone}.` : "") + (app ? ` ${app}/inbox?c=${mine.conversationId}` : "");
+  } else {
+    reply = mine
+      ? "Reply 1 to take the last alert" + (app ? `, or open the inbox: ${app}/inbox` : ".")
+      : "This is the business line. Nothing is waiting for you" + (app ? `; the inbox is at ${app}/inbox` : ".");
+  }
+  await db.insert(events).values({ tenantId: args.tenantId, type: "staff_text", payload: { staffId: args.staffId, claimed } });
+  await textStaff(args.tenantId, args.staffPhone, reply);
+  return { claimed, reply };
+}
+
+/** The staff member who owns this phone number, if any. */
+export async function staffByPhone(tenantId: string, raw: string, country = "US") {
+  const phone = normalizePhone(raw, country);
+  if (!phone) return null;
+  return (await db.query.staff.findFirst({ where: and(eq(staff.tenantId, tenantId), eq(staff.phone, phone)) })) ?? null;
 }

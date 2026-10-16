@@ -141,6 +141,23 @@ async function main() {
     check("a routine lead alerts nobody", (await alertsFor(routine.conversationId)).length === 0);
     await db.update(locations).set({ hours: ALL_DAY }).where(eq(locations.id, location.id));
 
+    console.log("\nA tech texting back is not a customer");
+    const runsBefore = ScriptedProvider.requests.length;
+    const contactsBefore = (await db.query.contacts.findMany({ where: eq(contacts.tenantId, tenant.id) })).length;
+    const onIt = await inbound(20, "On it", "+16175550102");  // Sam, who got the gas alert
+    check("Sam's 'On it' never reaches the AI", ScriptedProvider.requests.length === runsBefore && onIt.outcome?.provider === "rule");
+    check("and doesn't make Sam a contact", (await db.query.contacts.findMany({ where: eq(contacts.tenantId, tenant.id) })).length === contactsBefore);
+    const claimed = await db.query.conversations.findFirst({ where: eq(conversations.id, onIt.conversationId) });
+    // His latest alert was the no-heat emergency (after the gas one): that's the one he takes.
+    check("it claims his latest alert's conversation, taking it off the AI", claimed?.aiPaused === true && claimed.id === noHeat.conversationId,
+      `${onIt.conversationId} vs no-heat ${noHeat.conversationId}`);
+    check("and tells him who it is", Boolean(onIt.outcome?.reply?.startsWith("Got it")), onIt.outcome?.reply ?? "");
+    const chat = await inbound(21, "what's for lunch", "+16175550101");  // Dana
+    check("anything else from staff gets a pointer, not a chat", chat.outcome?.provider === "rule" && ScriptedProvider.requests.length === runsBefore, chat.outcome?.reply ?? "");
+    const { intakeLead } = await import("@/server/features/lead-intake");
+    const test = await intakeLead(tenant.id, { source: "website", externalId: "owner-test", name: "Dana", phone: "617-555-0101", message: "testing the form" });
+    check("the owner testing the web form with her own mobile is still a lead", Boolean(test.leadId) && Boolean(test.conversationId));
+
     console.log("\nReschedule requests reach a person");
     const [c] = await db.insert(contacts).values({ tenantId: tenant.id, displayName: "Leah", primaryPhone: "+16175550195" }).returning();
     const [convo] = await db.insert(conversations).values({ tenantId: tenant.id, contactId: c.id, channel: "sms" }).returning();

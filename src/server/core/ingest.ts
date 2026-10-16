@@ -9,6 +9,7 @@ import { extractIdentifiers } from "./extract";
 import { detectConsentKeyword, optInConfirmation, optOutConfirmation } from "./opt-out";
 import { handleReminderReply } from "@/server/features/reminders";
 import { contactData, publish } from "@/server/features/webhooks";
+import { handleStaffText, staffByPhone } from "@/server/features/staff-alerts";
 import { extractMemories } from "@/server/memory/extract";
 import { runAgentTurn, type AgentOutcome } from "@/server/agent/runtime";
 import { deliver } from "./deliver";
@@ -56,6 +57,25 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
         contactId: msg.from.externalId,
         messageId: existing.id,
         duplicate: true,
+      };
+    }
+  }
+
+  // 1b. A team member texting the business number (usually answering an
+  //     alert) is not a customer: never create a contact, never run the agent.
+  //     An owner testing their own web form with their own mobile still is a
+  //     lead, so this applies only to texts the person actually sent.
+  if (msg.channel === "sms" && msg.meta?.businessInitiated !== true) {
+    const tenantForStaff = await db.query.tenants.findFirst({ where: eq(tenants.id, msg.tenantId) });
+    const member = await staffByPhone(msg.tenantId, msg.from.externalId, tenantForStaff?.country ?? "US");
+    if (member) {
+      const r = await handleStaffText({
+        tenantId: msg.tenantId, staffId: member.id, staffPhone: member.phone!, staffName: member.name, body: msg.body,
+      });
+      return {
+        conversationId: r.claimed ?? "", contactId: "", messageId: "", duplicate: false, sent: false,
+        outcome: { reply: r.reply, escalated: false, toolCalls: [], costUsd: 0, latencyMs: 0,
+          provider: "rule", model: "staff-text", productionGrade: true },
       };
     }
   }
