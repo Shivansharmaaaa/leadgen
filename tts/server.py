@@ -39,6 +39,12 @@ WARM_PHRASES = [
     "Happy to help with that.",
     "Sure, let me explain how that works.",
     "Sorry, could you say that again?",
+    # Thinking fillers — played only when a turn is slow and nothing has been
+    # said yet, so the line never goes quiet while the model works.
+    "Let me see.",
+    "One second.",
+    "Mm, okay.",
+    "Right.",
     "Let me get a colleague to help you with that — someone will call you right back.",
 ]
 

@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { classifyInterruption, endpointDelayMs } from "./turn-taking";
+
+/** Kept in step with WARM_PHRASES in tts/server.py so these are pre-rendered. */
+const FILLERS = ["Let me see.", "One second.", "Mm, okay.", "Right."];
 
 type Turn = {
   who: "you" | "agent" | "system";
@@ -30,6 +34,7 @@ export default function VoicePage() {
   /** The utterance a speculative request was started for. */
   const speculatedFor = useRef<string | null>(null);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     sessionIdRef.current = `browser_${Math.random().toString(36).slice(2, 10)}`;
@@ -170,6 +175,24 @@ export default function VoicePage() {
 
     setTurns((t) => [...t, { who: "you", text }]);
     setThinking(true);
+
+    /**
+     * Thinking filler.
+     *
+     * When no canned opener matched, the line is silent until the model
+     * produces its first sentence. People do not do that — they say "let me
+     * see" and keep the floor. These are pre-rendered, so the filler itself
+     * costs nothing, and it is cancelled the moment real speech is ready.
+     */
+    if (fillerTimer.current) clearTimeout(fillerTimer.current);
+    let spokeFiller = false;
+    fillerTimer.current = setTimeout(() => {
+      spokeFiller = true;
+      enqueueSpeech(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
+    }, 700);
+    const cancelFiller = () => {
+      if (fillerTimer.current) { clearTimeout(fillerTimer.current); fillerTimer.current = null; }
+    };
     stopSpeaking();
 
     const tools: { name: string; ok: boolean; ms: number }[] = [];
@@ -209,6 +232,7 @@ export default function VoicePage() {
           try { ev = JSON.parse(raw); } catch { continue; }
 
           if (ev.type === "sentence") {
+            cancelFiller();
             const sentence = String(ev.text);
             firstWordMs ??= Number(ev.msSinceStart);
             spoken = spoken ? `${spoken} ${sentence}` : sentence;
@@ -260,6 +284,8 @@ export default function VoicePage() {
         setTurns((t) => [...t, { who: "system", text: String(err) }]);
       }
     } finally {
+      cancelFiller();
+      void spokeFiller;
       if (inflight.current === controller) inflight.current = null;
       setThinking(false);
     }
@@ -281,8 +307,23 @@ export default function VoicePage() {
         else interimText += chunk;
       }
 
-      // Barge-in: the moment the caller speaks, the agent stops.
-      if ((interimText || finalText).trim()) stopSpeaking();
+      // Only a real floor grab stops the agent. "mm-hmm" and "right" mean
+      // carry on, and a single stray word is usually the agent's own audio
+      // leaking back into the microphone.
+      const heard = (finalText || interimText).trim();
+      if (heard) {
+        const action = classifyInterruption(heard);
+        if (action === "barge_in") stopSpeaking();
+        else if (action === "backchannel" || action === "ignore") {
+          // Acknowledgement or noise: do not interrupt, and do not treat it
+          // as a turn of its own.
+          if (!finalText.trim()) { setInterim(interimText); return; }
+          if (classifyInterruption(finalText.trim()) !== "barge_in") {
+            setInterim("");
+            return;
+          }
+        }
+      }
 
       setInterim(interimText);
 
@@ -317,11 +358,12 @@ export default function VoicePage() {
        */
       if (speculationTimer.current) clearTimeout(speculationTimer.current);
       const candidate = interimText.trim();
-      if (candidate.split(/\s+/).length >= 4 && !speculatedFor.current) {
+      const delay = endpointDelayMs(candidate);
+      if (Number.isFinite(delay) && !speculatedFor.current) {
         speculationTimer.current = setTimeout(() => {
           speculatedFor.current = candidate;
           void send(candidate, { speculative: true });
-        }, 320);
+        }, delay);
       }
     };
 
