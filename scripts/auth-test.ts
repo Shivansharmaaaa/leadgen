@@ -49,6 +49,7 @@ async function main() {
   const deep = await middleware(req("/inbox?c=abc"));
   check("the thread link survives the sign-in", Boolean(deep.headers.get("location")?.includes(encodeURIComponent("/inbox?c=abc"))));
   check("inbox API without a session → 401", (await middleware(req("/api/inbox", { method: "POST" }))).status === 401);
+  check("settings without a session → sign-in page", (await middleware(req("/settings"))).status === 307);
   check("dashboard with a session → through", passes(await middleware(req("/dashboard", { cookie: token }))));
   check("inbox API with a session, same site → through", passes(await middleware(req("/api/inbox", { method: "POST", cookie: token, origin: "http://app.local" }))));
   check("inbox API with a session from another site → 403", (await middleware(req("/api/inbox", { method: "POST", cookie: token, origin: "https://evil.example" }))).status === 403);

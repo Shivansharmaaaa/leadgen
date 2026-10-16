@@ -63,7 +63,7 @@ export async function passwordMatches(given: string, expected: string): Promise<
 
 /** Pages and APIs only the business may see. Public surfaces are listed in middleware. */
 export function isProtected(pathname: string): boolean {
-  return /^\/(?:dashboard|inbox)(?:\/|$)/.test(pathname) || /^\/api\/inbox(?:\/|$)/.test(pathname);
+  return /^\/(?:dashboard|inbox|settings)(?:\/|$)/.test(pathname) || /^\/api\/inbox(?:\/|$)/.test(pathname);
 }
 
 /** Where to go after signing in: a path on this site only, never "//evil.com". */

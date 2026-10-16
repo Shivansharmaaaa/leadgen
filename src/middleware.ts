@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isProtected, SESSION_COOKIE, verifySession } from "@/server/auth/session";
 
 /**
- * Guards the owner-facing surfaces (dashboard, inbox, inbox API).
+ * Guards the owner-facing surfaces (dashboard, inbox, settings, inbox API).
  *
  * Public by design, each with its own protection: /api/chat (rate limits),
  * /api/leads (intake key), /api/webhooks/* (provider signatures), the chat
@@ -41,5 +41,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/inbox/:path*", "/api/inbox/:path*"],
+  matcher: ["/dashboard/:path*", "/inbox/:path*", "/settings/:path*", "/api/inbox/:path*"],
 };
