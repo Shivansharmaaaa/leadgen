@@ -188,23 +188,11 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
 
   const summary = [input.service, input.message].filter(Boolean).join(" — ") || null;
 
-  // No phone: nothing the agent can send on. A person replies by email.
-  if (!phone) {
-    const [lead] = await db.insert(leads).values({
-      tenantId, contactId: contact.id, sourceChannel: "email", source: input.source,
-      service: input.service ?? null, summary,
-    }).returning();
-    await logIntake(tenantId, contact.id, null, {
-      dedupeKey, leadId: lead.id, source: input.source, firstResponse: "manual_follow_up",
-      consent, reason: "email-only lead: reply by email",
-    });
-    await publish(tenantId, "lead.created", {
-      lead_id: lead.id, source: input.source, service: input.service ?? null, message: input.message ?? null,
-      first_response: "manual_follow_up", contact: await contactData(contact.id),
-    });
-    return { ...empty, leadId: lead.id, contactId: contact.id, firstResponse: "manual_follow_up",
-             reason: "email-only lead: reply by email" };
-  }
+  // Text if there is a phone, otherwise email. An email answering the
+  // person's own enquiry is a service message (CAN-SPAM transactional, CASL
+  // implied consent from an enquiry); a first text still needs written consent.
+  const channel = phone ? "sms" : "email";
+  const address = (phone ?? email)!;
 
   // The submission becomes the first inbound message, stamped with the time
   // the person submitted it, so the SLA clock measures what they experienced.
@@ -215,19 +203,21 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
   const firstName = input.name?.split(/\s+/)[0];
   const ingested = await handleInbound({
     tenantId,
-    channel: "sms",
+    channel,
     externalId: dedupeKey ? `intake:${dedupeKey}` : null,
     externalThreadId: null,
-    from: { channel: "sms", externalId: phone, name: input.name ?? null, phone, email },
+    from: { channel, externalId: address, name: input.name ?? null, phone, email },
     body,
     receivedAt: submittedAt,
     meta: {
       businessInitiated: true,
+      transactional: channel === "email",
+      subject: channel === "email" ? `Your ${input.service ? input.service + " " : ""}request — ${businessName}` : null,
       intakeSource: input.source,
       postalCode: input.postalCode ?? null,
       intro: `Hi${firstName ? ` ${firstName}` : ""}, it's ${settings.agentName ?? "the team"} at ${businessName} ` +
         `about your ${sourceLabel(input.source)} request.`,
-      footer: "Reply STOP to opt out.",
+      footer: channel === "sms" ? "Reply STOP to opt out." : "If you'd rather not hear from us, just reply \"unsubscribe\".",
     },
   });
 
@@ -241,7 +231,7 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
         .where(eq(leads.id, existing.id)).returning())[0].id
     : (await db.insert(leads).values({
         tenantId, contactId: ingested.contactId, conversationId: ingested.conversationId,
-        sourceChannel: "sms", source: input.source, service: input.service ?? null, summary,
+        sourceChannel: channel, source: input.source, service: input.service ?? null, summary,
       }).returning())[0].id;
 
   // What actually happened to the reply, read from the message it produced.

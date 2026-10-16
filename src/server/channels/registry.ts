@@ -2,6 +2,7 @@ import type { Channel, ChannelAdapter } from "@/server/core/types";
 import { webchatAdapter } from "./webchat";
 import { smsAdapter, voiceAdapter } from "./twilio";
 import { instagramAdapter, messengerAdapter, whatsappAdapter } from "./meta";
+import { emailAdapter } from "./email";
 
 /**
  * Egress registry. Adding a platform is: implement ChannelAdapter, register it
@@ -23,5 +24,6 @@ registerAdapter(voiceAdapter);
 registerAdapter(instagramAdapter);
 registerAdapter(messengerAdapter);
 registerAdapter(whatsappAdapter);
+registerAdapter(emailAdapter);
 
 export { adapters };

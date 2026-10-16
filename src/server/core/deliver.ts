@@ -56,7 +56,7 @@ export async function deliver(args: {
     channel: args.channel,
     to: args.to,
     body: truncate(args.body, adapter.maxLength),
-    meta: { initiated: args.initiated === true, transactional: args.transactional === true },
+    meta: { ...rowMeta, initiated: args.initiated === true, transactional: args.transactional === true },
   };
 
   if (adapter.canSend) {

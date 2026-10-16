@@ -222,6 +222,9 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
       // is and how to stop, in words the model cannot drop.
       body: firstTouch ? frameFirstTouch(outcome.reply, msg.meta!) : outcome.reply,
       initiated: firstTouch,
+      transactional: msg.meta?.transactional === true,
+      // Our own subject only when we write first; a reply threads as "Re: theirs".
+      meta: firstTouch && typeof msg.meta?.subject === "string" ? { subject: msg.meta.subject } : undefined,
     });
   } else if (outcome.reply && outcome.holdReason) {
     // Draft is kept so a human can approve or edit it in the inbox.

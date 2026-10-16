@@ -15,6 +15,7 @@ import { POST as intakeRoute } from "@/app/api/leads/route";
  *   npm run intake:test
  */
 process.env.LLM_PROVIDER = "scripted";
+delete process.env.SMTP_HOST;
 delete process.env.TWILIO_ACCOUNT_SID;
 delete process.env.TWILIO_AUTH_TOKEN;
 
@@ -132,7 +133,9 @@ async function main() {
 
     console.log("\nEmail-only lead");
     const c = await intakeLead(tenant.id, { source: "facebook_lead_ad", externalId: "fb-9", email: "Nora@Example.com", service: "Heat pump quote" });
-    check("stored for a manual email reply", c.firstResponse === "manual_follow_up" && Boolean(c.leadId), c.firstResponse);
+    // No SMTP here: an email reply that passes the gate fails at the provider.
+    check("answered by email at once (no SMTP here, so it fails at the provider, not the gate)",
+      c.firstResponse === "failed" && Boolean(c.reason?.includes("Email not configured")) && Boolean(c.leadId), `${c.firstResponse}: ${c.reason}`);
 
     console.log("\nSTOP and START");
     const runsBefore = ScriptedProvider.requests.length;

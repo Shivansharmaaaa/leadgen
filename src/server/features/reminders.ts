@@ -84,7 +84,10 @@ export async function sendAppointmentReminder(payload: Record<string, unknown>):
   ]);
   if (!tenant || !contact) return { sent: false, reason: "missing tenant or contact" };
   if (contact.doNotContact) return { sent: false, reason: "contact is on do-not-contact" };
-  if (!contact.primaryPhone) return { sent: false, reason: "no phone number to text" };
+  // A text if they gave a mobile, otherwise an email.
+  const channel = contact.primaryPhone ? "sms" : contact.primaryEmail ? "email" : null;
+  if (!channel) return { sent: false, reason: "no phone number or email to reach them on" };
+  const address = (channel === "sms" ? contact.primaryPhone : contact.primaryEmail)!;
 
   const tz = await timezoneFor(appt.tenantId, appt.locationId);
   if (kind !== "confirmation" && !withinSendingHours(new Date(), tz)) {
@@ -100,16 +103,20 @@ export async function sendAppointmentReminder(payload: Record<string, unknown>):
     customerConfirmed: Boolean(appt.customerConfirmedAt),
   });
 
-  const conversationId = await smsThread(appt.tenantId, contact.id, contact.primaryPhone);
+  const conversationId = await threadFor(appt.tenantId, contact.id, channel, address);
+  const business = tenant.settings?.businessName ?? tenant.name;
   const sent = await deliver({
     tenantId: appt.tenantId,
     conversationId,
-    channel: "sms",
-    to: { channel: "sms", externalId: contact.primaryPhone },
+    channel,
+    to: { channel, externalId: address },
     body,
     initiated: true,
     transactional: true,
-    meta: { reminderFor: appt.id, reminderKind: kind },
+    meta: {
+      reminderFor: appt.id, reminderKind: kind,
+      ...(channel === "email" ? { subject: kind === "confirmation" ? `Booked: ${appt.service} — ${business}` : `Reminder: ${appt.service} — ${business}` } : {}),
+    },
   });
 
   await db.insert(events).values({
@@ -233,14 +240,14 @@ async function timezoneFor(tenantId: string, locationId: string | null): Promise
   return tenant?.timezone ?? "UTC";
 }
 
-async function smsThread(tenantId: string, contactId: string, phone: string): Promise<string> {
+async function threadFor(tenantId: string, contactId: string, channel: "sms" | "email", address: string): Promise<string> {
   const existing = await db.query.conversations.findFirst({
-    where: and(eq(conversations.tenantId, tenantId), eq(conversations.contactId, contactId), eq(conversations.channel, "sms")),
+    where: and(eq(conversations.tenantId, tenantId), eq(conversations.contactId, contactId), eq(conversations.channel, channel)),
     orderBy: desc(conversations.lastMessageAt),
   });
   if (existing) return existing.id;
   const [created] = await db.insert(conversations).values({
-    tenantId, contactId, channel: "sms", externalThreadId: phone,
+    tenantId, contactId, channel, externalThreadId: channel === "sms" ? address : null,
   }).returning();
   return created.id;
 }
