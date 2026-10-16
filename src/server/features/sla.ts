@@ -1,5 +1,9 @@
-import { and, asc, eq, gte, sql } from "drizzle-orm";
-import { db, messages, conversations, events } from "@/server/db";
+import { and, asc, eq, gte } from "drizzle-orm";
+import { formatInTimeZone } from "date-fns-tz";
+import { db, messages, conversations, events, tenants } from "@/server/db";
+
+/** A draft held for review, or a send that failed, has not reached anyone. */
+const REACHED = new Set(["sent", "delivered", "read"]);
 
 /**
  * FEATURE 2 — speed-to-lead SLA.
@@ -22,6 +26,8 @@ export type SlaReport = {
 
 export async function slaReport(tenantId: string, sinceDays = 30): Promise<SlaReport> {
   const since = new Date(Date.now() - sinceDays * 86400_000);
+  const tenant = await db.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
+  const tz = tenant?.timezone ?? "UTC";
 
   const convos = await db.query.conversations.findMany({
     where: and(eq(conversations.tenantId, tenantId), gte(conversations.createdAt, since)),
@@ -37,14 +43,15 @@ export async function slaReport(tenantId: string, sinceDays = 30): Promise<SlaRe
     });
     const firstIn = msgs.find((m) => m.direction === "inbound");
     const firstOut = msgs.find(
-      (m) => m.direction === "outbound" && firstIn && m.createdAt >= firstIn.createdAt,
+      (m) => m.direction === "outbound" && REACHED.has(m.status) && firstIn && m.createdAt >= firstIn.createdAt,
     );
     if (!firstIn || !firstOut) continue;
 
     latencies.push({
       conversationId: c.id,
       seconds: Math.max(0, Math.round((firstOut.createdAt.getTime() - firstIn.createdAt.getTime()) / 1000)),
-      hour: firstIn.createdAt.getUTCHours(),
+      // The business's local hour: 8am-6pm in UTC is 4am-2pm in Boston.
+      hour: Number(formatInTimeZone(firstIn.createdAt, tz, "H")),
     });
   }
 
