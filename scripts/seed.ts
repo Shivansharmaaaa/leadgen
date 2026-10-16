@@ -24,6 +24,8 @@ async function main() {
       autoSendThreshold: 0.75,
       recordCalls: true,
       escalationTriggers: ["insurance claim", "warranty dispute"],
+      asrContext: "this is a heating and cooling business: 'an answer' or 'a sea' is almost " +
+        "certainly 'an AC', 'furnish' is 'furnace', 'heat bump' is 'heat pump'",
     },
   }).returning();
 

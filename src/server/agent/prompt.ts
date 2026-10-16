@@ -30,6 +30,19 @@ type Tenant = typeof tenants.$inferSelect;
 type Contact = typeof contacts.$inferSelect;
 type Location = typeof locations.$inferSelect;
 
+/**
+ * Speech recognition mishears, and what it mishears depends on the trade: an
+ * HVAC caller's "an AC" comes out as "an answer", a dental caller's "crown" as
+ * "clown". The examples are the tenant's own (`settings.asrContext`); without
+ * them the model is still told to read each turn in light of the business.
+ */
+function mishearingLine(asrContext: string | undefined): string {
+  const reading = asrContext ? `the fact that ${asrContext}` : "what this business does";
+  return "- What the caller says reaches you through speech recognition, which mishears. " +
+    `Read every turn in light of the conversation so far and ${reading}. Answer what they ` +
+    "meant. If a turn makes no sense at all, ask them to say it again rather than guessing.";
+}
+
 /** Per-channel style and hard length limits the platform imposes. */
 const CHANNEL_STYLE: Record<Channel, string> = {
   voice:
@@ -99,7 +112,7 @@ to capture work for ${businessName}.
 
 Channel: ${channel}
 
-${CHANNEL_STYLE[channel]}
+${CHANNEL_STYLE[channel]}${channel === "voice" ? `\n${mishearingLine(s.asrContext)}` : ""}
 
 # What you are trying to do, in order
 1. Understand what the person actually needs.

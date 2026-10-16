@@ -59,6 +59,12 @@ export type TenantSettings = {
   autoSendThreshold?: number;
   afterHoursOnly?: boolean;
   recordCalls?: boolean;
+  /**
+   * What speech recognition gets wrong for this trade, read into the voice
+   * prompt after "in light of the fact that": e.g. "this is a heating and
+   * cooling business: 'an answer' is almost certainly 'an AC'".
+   */
+  asrContext?: string;
 };
 
 export const locations = pgTable("locations", {
