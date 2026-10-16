@@ -6,6 +6,13 @@ import { classifyInterruption, endpointDelayMs } from "./turn-taking";
 /** Kept in step with WARM_PHRASES in tts/server.py so these are pre-rendered. */
 const FILLERS = ["Let me see.", "One second.", "Mm, okay.", "Right."];
 
+const SIGNAL_COLOUR: Record<string, string> = {
+  "backchannel": "var(--accent)",
+  "barge-in": "var(--warn)",
+  "endpointing": "var(--muted)",
+  "filler": "var(--warn)",
+};
+
 type Turn = {
   who: "you" | "agent" | "system";
   text: string;
@@ -22,6 +29,18 @@ export default function VoicePage() {
   const [supported, setSupported] = useState(true);
   const [meta, setMeta] = useState<{ provider?: string; model?: string; productionGrade?: boolean }>({});
   const [ttsReady, setTtsReady] = useState<boolean | null>(null);
+  /**
+   * A live trace of the turn-taking layer.
+   *
+   * Backchannel detection, semantic endpointing and thinking fillers are all
+   * invisible when they work — you notice them only by NOT being interrupted,
+   * or by not hearing silence. Showing the decisions makes them checkable
+   * rather than something to take on faith.
+   */
+  const [signals, setSignals] = useState<{ at: number; kind: string; detail: string }[]>([]);
+  const note = useCallback((kind: string, detail: string) => {
+    setSignals((s) => [...s.slice(-5), { at: Date.now(), kind, detail }]);
+  }, []);
 
   const recognitionRef = useRef<any>(null);
   const sessionIdRef = useRef<string>("");
@@ -232,7 +251,9 @@ export default function VoicePage() {
     if (!opts.speculative) {
       fillerTimer.current = setTimeout(() => {
         spokeFiller = true;
-        enqueueSpeech(FILLERS[Math.floor(Math.random() * FILLERS.length)]);
+        const f = FILLERS[Math.floor(Math.random() * FILLERS.length)];
+        note("filler", `nothing ready at 700ms — said "${f}"`);
+        enqueueSpeech(f);
       }, 700);
     }
     const cancelFiller = () => {
@@ -341,7 +362,7 @@ export default function VoicePage() {
       if (inflight.current === controller) inflight.current = null;
       setThinking(false);
     }
-  }, [enqueueSpeech, stopSpeaking]);
+  }, [enqueueSpeech, stopSpeaking, note]);
 
   const normalise = (t: string) => t.trim().toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ");
 
@@ -380,8 +401,12 @@ export default function VoicePage() {
       const heard = (finalText || interimText).trim();
       if (heard) {
         const action = classifyInterruption(heard);
-        if (action === "barge_in") stopSpeaking();
+        if (action === "barge_in") {
+          note("barge-in", `"${heard.slice(0, 28)}" — stopped the agent`);
+          stopSpeaking();
+        }
         else if (action === "backchannel" || action === "ignore") {
+          if (action === "backchannel") note("backchannel", `"${heard.slice(0, 20)}" — kept going`);
           // Acknowledgement or noise: do not interrupt, and do not treat it
           // as a turn of its own.
           if (!finalText.trim()) { setInterim(interimText); return; }
@@ -432,6 +457,7 @@ export default function VoicePage() {
       const candidate = interimText.trim();
       const delay = endpointDelayMs(candidate);
       if (Number.isFinite(delay) && !speculatedFor.current) {
+        note("endpointing", `waiting ${delay}ms — "${candidate.slice(-24)}"`);
         speculationTimer.current = setTimeout(() => {
           speculatedFor.current = candidate;
           void send(candidate, { speculative: true });
@@ -451,7 +477,7 @@ export default function VoicePage() {
     };
 
     try { rec.start(); setListening(true); } catch { /* already running */ }
-  }, [send, stopSpeaking]);
+  }, [send, stopSpeaking, note]);
 
   const stopListening = useCallback(() => {
     wantListening.current = false;
@@ -532,6 +558,25 @@ export default function VoicePage() {
           </div>
         )}
       </div>
+
+      {signals.length > 0 && (
+        <div style={{
+          marginTop: 10, padding: "8px 12px", borderRadius: 9,
+          border: "1px solid var(--border)", background: "var(--panel)",
+          fontFamily: "ui-monospace, monospace", fontSize: 11, color: "var(--muted)",
+          display: "flex", flexDirection: "column", gap: 3,
+        }}>
+          <div style={{ color: "var(--muted)", opacity: 0.6, marginBottom: 2 }}>turn-taking</div>
+          {signals.map((sig, i) => (
+            <div key={sig.at + "-" + i}>
+              <span style={{ color: SIGNAL_COLOUR[sig.kind] ?? "var(--muted)" }}>
+                {sig.kind.padEnd(12)}
+              </span>
+              {sig.detail}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
         <button

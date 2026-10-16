@@ -3,6 +3,27 @@ import type { KnowledgePack } from "@/server/core/knowledge";
 import type { tenants, contacts, locations } from "@/server/db";
 import type { Channel } from "@/server/core/types";
 import { CONVERSION_PLAYBOOK } from "./playbook";
+
+/**
+ * A fine-tune's whole purpose is to move behaviour out of the prompt and into
+ * the weights. The conversion playbook is 740 tokens of prefill on every
+ * single turn; if a trained model holds the same eval score without it, that
+ * is 740 tokens saved per turn forever.
+ *
+ * LEAN_PROMPT=1 runs the short version, so the two can be measured against
+ * the same scenarios.
+ */
+const LEAN_PROMPT = process.env.LEAN_PROMPT === "1";
+
+const LEAN_PLAYBOOK = `
+# Converting this conversation
+They contacted you, so they are warm. Remove reasons not to book.
+Acknowledge their specific problem in their words, ask ONE question, offer two
+real times, get a name and number.
+Objections: acknowledge, reframe with a verified fact, re-offer once. Never
+argue, never discount, never invent scarcity or a deadline. After two
+declines, capture their details and stop.
+`.trim();
 import { renderMemoryBlock, type MemoryRow } from "@/server/memory/store";
 
 type Tenant = typeof tenants.$inferSelect;
@@ -86,7 +107,7 @@ ${CHANNEL_STYLE[channel]}
 3. Get them booked. Offer real times from check_availability and book one.
 4. If you cannot help, hand over cleanly rather than guessing.
 
-${CONVERSION_PLAYBOOK}
+${LEAN_PROMPT ? LEAN_PLAYBOOK : CONVERSION_PLAYBOOK}
 
 # Absolute rules
 - NEVER state a price, an opening time, an availability slot, or a policy that is

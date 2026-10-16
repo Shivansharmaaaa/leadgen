@@ -81,6 +81,49 @@ type PrefixRule = { intent: string; test: RegExp; openers: string[] };
 
 const PREFIX_RULES: PrefixRule[] = [
   {
+    intent: "greeting",
+    test: /^(?:hi|hey|hello|yo|good (?:morning|afternoon|evening))\b/i,
+    openers: [
+      "Hi there.",
+      "Hello.",
+      "Hi, thanks for calling.",
+    ],
+  },
+  {
+    intent: "thanks",
+    test: /\b(?:thank you|thanks|cheers|appreciate it|much appreciated)\b/i,
+    openers: [
+      "You're welcome.",
+      "No problem at all.",
+      "Of course.",
+    ],
+  },
+  {
+    intent: "farewell",
+    test: /\b(?:bye|goodbye|see you|take care|that'?s all|nothing else|i'?m done)\b/i,
+    openers: [
+      "Thanks for calling.",
+      "Take care.",
+    ],
+  },
+  {
+    intent: "acknowledge",
+    test: /^(?:yes|yeah|yep|yup|no|nope|ok|okay|sure|right|alright|got it|i see|mm|mhm)\b/i,
+    openers: [
+      "Okay.",
+      "Right.",
+      "Got it.",
+    ],
+  },
+  {
+    intent: "presence",
+    test: /\b(?:are you (?:there|still there|listening)|can you (?:hear|understand) me|hello\?|you there)\b|\bi(?:'?m| am) (?:talking|speaking) to you\b/i,
+    openers: [
+      "Yes, I'm here.",
+      "I can hear you.",
+    ],
+  },
+  {
     intent: "breakdown",
     test: /\b(?:not (?:working|cooling|heating|turning on)|stopped working|broken|broke down|won'?t (?:turn on|start|work|cool|heat)|no (?:heat|cooling|air)|blowing (?:warm|cold|hot))\b/i,
     openers: [
