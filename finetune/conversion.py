@@ -30,14 +30,14 @@ from datetime import datetime
 # ─── Objections, in the caller's words ───────────────────────────────────────
 
 PRICE = [
-    "Eighty-nine just for someone to look at it? That seems steep.",
+    "Eighty-nine dollars for a diagnostic visit? That's a lot.",
     "That's more than I was expecting, honestly.",
     "Hmm, that's a bit pricey for a call-out.",
     "Is there any way to do it cheaper?",
     "That's quite a lot just for a diagnosis.",
 ]
 DELAY = [
-    "Let me think about it and get back to you.",
+    "I'd like to mull it over first, if that's okay.",
     "I'll need to talk to my husband first.",
     "Can I call you back? I want to think it over.",
     "I'm not ready to commit to anything today.",
@@ -109,7 +109,7 @@ CONVERT = [
     "That's reasonable. Let's book {a_short}.",
 ]
 DECLINE = [
-    "No, I think I'll leave it for now, thanks.",
+    "I'll pass for the moment, thanks anyway.",
     "I'd still rather hold off, if that's alright.",
     "No, I'm going to wait and see. Thanks though.",
     "Not just yet, but thanks for your time.",

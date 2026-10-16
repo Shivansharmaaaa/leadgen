@@ -310,7 +310,7 @@ PRICE_REPLY = [
     "I don't have a set price for {thing}, it depends on what the tech finds. The diagnostic visit is $89, and that's waived if you go ahead with the repair. Want me to find you a time?",
     "I can't give you a number for {thing} without the tech seeing it. What I can tell you is the diagnostic is $89, waived if you proceed. Should I check availability?",
 ]
-AI_Q = ["Am I talking to a real person?", "Wait, is this a robot?", "Are you an actual human?"]
+AI_Q = ["Is this a recording or a human?", "Wait, is this a robot?", "Are you an actual human?"]
 AI_REPLY = [
     "I'm an AI assistant for {biz}. I can book you in, or get a person to call you back if you'd rather.",
     "No, I'm {biz}'s AI assistant. Happy to keep going, or I can have someone from the team call you.",
@@ -436,6 +436,40 @@ def eval_utterances() -> list[str]:
     return [s for t in turns for s in re.findall(r'"((?:[^"\\]|\\.)*)"', t)]
 
 
+def _norm(s: str) -> str:
+    s = s.lower().replace("$89", "eighty-nine").replace("-", " ")
+    return re.sub(r"[^a-z ]", "", s).strip()
+
+
+def find_leaks(evals: list[str], train: list[dict], threshold: float = 0.8):
+    """
+    Eval utterances found in the training text, verbatim or paraphrased.
+
+    An exact-substring check alone let "Eighty-nine just for someone to look at
+    it? That seems steep." through against the eval's "Eighty-nine just to look
+    at it? That seems steep." — the model would be graded on a line it had
+    effectively memorised. Caller lines carrying digits (names and numbers) are
+    exempt from the fuzzy pass: they share a template, not content, and that
+    template is the behaviour being taught.
+    """
+    from difflib import SequenceMatcher
+    callers = {m["content"] for r in train for m in r["messages"] if m["role"] == "user"}
+    callers = {c: _norm(c) for c in callers if not re.search(r"\d", c)}
+    leaks = []
+    for e in sorted(set(evals)):
+        if any(e in r["prompt"] for r in train):
+            leaks.append((1.0, e, "(verbatim in a prompt)"))
+            continue
+        if re.search(r"\d", e):
+            continue
+        ne = _norm(e)
+        for c, nc in callers.items():
+            ratio = SequenceMatcher(None, ne, nc).ratio()
+            if ratio >= threshold:
+                leaks.append((ratio, e, c))
+    return leaks
+
+
 def finalize(ex: dict, tools: list[dict], source: str, group: str) -> dict:
     prompt = render_prompt(ex["system"], ex["context"], tools, ex["messages"])
     return {"source": source, "kind": ex["kind"], "group": group,
@@ -506,9 +540,10 @@ def main():
         for ex in conversion_dialogue(kit, rng):
             rows[dest].append(finalize(ex, tools, "conversion", f"conv_{i}"))
 
-    leaks = [u for u in eval_utterances() if any(u in r["prompt"] for r in rows["train"])]
+    leaks = find_leaks(eval_utterances(), rows["train"])
     if leaks:
-        raise SystemExit(f"eval utterances leaked into training data: {leaks}")
+        raise SystemExit("eval utterances leaked into training data:\n" +
+                         "\n".join(f"  {r:.2f}  eval {e!r}\n        train {t!r}" for r, e, t in leaks))
 
     for split, items in rows.items():
         rng.shuffle(items)
