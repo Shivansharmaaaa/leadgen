@@ -18,8 +18,15 @@ adapter comparisons are runs, not code edits:
   --clip / --grad-accum / --warmup / --lr
 
 Loss is taken only on the assistant's own steps (the spans recorded by
-build_dataset.py), never on the prompt, the caller, or tool results.
-Writes the adapter and a metrics history to data/finetune/runs/<name>/.
+build_dataset.py), never on the prompt, the caller, or tool results — and the
+vocabulary projection is computed only at those positions. On a 4k-token
+sequence the full projection is ~3 GB of fp32 logits, almost all of it for
+tokens that carry no loss.
+
+Writes the adapter and a metrics history to data/finetune/runs/<name>/, and a
+resumable checkpoint (adapter, optimiser, position in the data) every
+--save-every steps. A run that dies — sleep, power, Ctrl-C — continues from
+its last checkpoint with --resume, on the same data order.
 """
 
 from __future__ import annotations
@@ -28,10 +35,13 @@ import argparse
 import json
 import math
 import random
+import shutil
+import signal
 import time
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data/finetune"
@@ -132,6 +142,8 @@ def main():
     ap.add_argument("--limit-train", type=int, default=0, help="use only the first N packed sequences")
     ap.add_argument("--eval-rows", type=int, default=48)
     ap.add_argument("--eval-every", type=int, default=25)
+    ap.add_argument("--save-every", type=int, default=0, help="checkpoint every N steps (default: --eval-every)")
+    ap.add_argument("--resume", action="store_true", help="continue from the run's last checkpoint")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--no-grad-checkpoint", action="store_true")
@@ -141,6 +153,12 @@ def main():
 
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    # Ctrl-C and `kill` both checkpoint-and-exit. Python ignores SIGINT when it
+    # inherits it ignored (a background job in a non-interactive shell does),
+    # so install the handler explicitly rather than rely on the default.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -170,7 +188,10 @@ def main():
         if len(valid) >= args.eval_rows:
             break
 
-    model = AutoModelForCausalLM.from_pretrained(args.base, dtype=dtype).to(device)
+    # Straight onto the device: loading to CPU and then calling .to(device)
+    # holds two full copies at once (~13 GB for the 3B), which on an 18 GB Mac
+    # got the process killed before training began.
+    model = AutoModelForCausalLM.from_pretrained(args.base, dtype=dtype, device_map={"": str(device)})
     model.config.use_cache = False
     if not args.no_grad_checkpoint:
         model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -191,60 +212,118 @@ def main():
     total = args.max_steps or max(1, int(len(train) * args.epochs / args.grad_accum))
     order = [i for _ in range(math.ceil(args.epochs) + 1) for i in random.sample(range(len(train)), len(train))]
 
+    inner = model.get_base_model()
+
+    def target_loss(ids: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Mean next-token loss over the labelled positions, as HF computes it,
+        projecting to the vocabulary only where there is a label."""
+        hidden = inner.model(input_ids=ids[None].to(device)).last_hidden_state[0, :-1]
+        targets = labels[1:].to(device)
+        keep = targets != -100
+        logits = inner.lm_head(hidden[keep]).float()
+        return F.cross_entropy(logits, targets[keep])
+
     def evaluate() -> float:
         model.eval()
         losses = []
         with torch.no_grad():
             for ids, labels in valid:
-                losses.append(model(input_ids=ids[None].to(device), labels=labels[None].to(device)).loss.item())
+                losses.append(target_loss(ids, labels).item())
         model.train()
         return sum(losses) / len(losses)
 
+    ckpt = out / "checkpoint"
+    save_every = args.save_every or args.eval_every
+
+    def save_checkpoint(step: int):
+        """Write to a temp dir and rename, so a crash mid-save never leaves a
+        half-written checkpoint where the last good one was."""
+        tmp = out / "checkpoint.tmp"
+        shutil.rmtree(tmp, ignore_errors=True)
+        model.save_pretrained(tmp)
+        torch.save(opt.state_dict(), tmp / "optimizer.pt")
+        (tmp / "state.json").write_text(json.dumps({
+            # The data position at the step boundary, not the live cursor: an
+            # interrupt mid-accumulation has consumed sequences no step used.
+            "step": step, "cursor": start_cursor + (step - start) * args.grad_accum,
+            "seen_tokens": seen_tokens, "ewma": ewma,
+            "elapsed_s": time.time() - t0, "history": history}))
+        shutil.rmtree(ckpt, ignore_errors=True)
+        tmp.rename(ckpt)
+
     history = {"args": vars(args), "steps": [], "evals": []}
+    start, seen_tokens, cursor, ewma, prior_elapsed = 0, 0, 0, None, 0.0
+    if args.resume and (ckpt / "state.json").exists():
+        from peft import set_peft_model_state_dict
+        from safetensors.torch import load_file
+        set_peft_model_state_dict(model, load_file(ckpt / "adapter_model.safetensors", device=str(device)))
+        opt.load_state_dict(torch.load(ckpt / "optimizer.pt", map_location=device))
+        st = json.loads((ckpt / "state.json").read_text())
+        start, cursor, seen_tokens, ewma = st["step"], st["cursor"], st["seen_tokens"], st["ewma"]
+        prior_elapsed, history = st["elapsed_s"], st["history"]
+        history["args"] = vars(args)
+        print(f"resumed from step {start}/{total} ({prior_elapsed / 60:.1f} min already trained)", flush=True)
+    elif args.resume:
+        print("no checkpoint to resume from — starting fresh")
+
+    start_cursor = cursor
     if args.eval_only:
         print(f"step    0  valid {evaluate():.4f}")
         return
-    if not args.no_initial_eval:
+    if start == 0 and not args.no_initial_eval:
         v0 = evaluate()
         history["evals"].append({"step": 0, "valid_loss": v0})
-        print(f"step    0  valid {v0:.4f}")
+        print(f"step    0  valid {v0:.4f}", flush=True)
 
     model.train()
-    t0, seen_tokens, cursor, ewma = time.time(), 0, 0, None
-    for step in range(total):
-        lr = lr_at(step, total, args.warmup, args.lr)
-        for g in opt.param_groups:
-            g["lr"] = lr * g["lr_scale"]
+    t0 = time.time() - prior_elapsed
+    run_tokens, run_t0, step = 0, time.time(), start
+    try:
+        for step in range(start, total):
+            lr = lr_at(step, total, args.warmup, args.lr)
+            for g in opt.param_groups:
+                g["lr"] = lr * g["lr_scale"]
 
-        step_loss = 0.0
-        for _ in range(args.grad_accum):
-            ids, labels = train[order[cursor % len(order)]]
-            cursor += 1
-            loss = model(input_ids=ids[None].to(device), labels=labels[None].to(device)).loss / args.grad_accum
-            loss.backward()
-            step_loss += loss.item()
-            seen_tokens += len(ids)
+            step_loss = 0.0
+            for _ in range(args.grad_accum):
+                ids, labels = train[order[cursor % len(order)]]
+                cursor += 1
+                loss = target_loss(ids, labels) / args.grad_accum
+                loss.backward()
+                step_loss += loss.item()
+                seen_tokens += len(ids)
+                run_tokens += len(ids)
 
-        grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], args.clip).item()
-        opt.step()
-        opt.zero_grad(set_to_none=True)
+            grad_norm = torch.nn.utils.clip_grad_norm_([p for g in groups for p in g["params"]], args.clip).item()
+            opt.step()
+            opt.zero_grad(set_to_none=True)
 
-        ewma = step_loss if ewma is None else 0.9 * ewma + 0.1 * step_loss
-        elapsed = time.time() - t0
-        history["steps"].append({"step": step + 1, "loss": step_loss, "grad_norm": grad_norm, "lr": lr,
-                                 "elapsed_s": elapsed})
-        print(f"step {step + 1:4d}/{total}  loss {step_loss:.4f} (ewma {ewma:.4f})  |g| {grad_norm:.3f}  "
-              f"lr {lr:.2e}  {seen_tokens / elapsed:.0f} tok/s  {elapsed / 60:.1f} min", flush=True)
+            ewma = step_loss if ewma is None else 0.9 * ewma + 0.1 * step_loss
+            elapsed = time.time() - t0
+            history["steps"].append({"step": step + 1, "loss": step_loss, "grad_norm": grad_norm, "lr": lr,
+                                     "elapsed_s": elapsed})
+            print(f"step {step + 1:4d}/{total}  loss {step_loss:.4f} (ewma {ewma:.4f})  |g| {grad_norm:.3f}  "
+                  f"lr {lr:.2e}  {run_tokens / (time.time() - run_t0):.0f} tok/s  {elapsed / 60:.1f} min",
+                  flush=True)
 
-        out_of_time = args.max_minutes and elapsed > args.max_minutes * 60
-        if (step + 1) % args.eval_every == 0 or step + 1 == total or out_of_time:
-            v = evaluate()
-            history["evals"].append({"step": step + 1, "valid_loss": v, "elapsed_s": elapsed})
-            print(f"step {step + 1:4d}  valid {v:.4f}", flush=True)
-            (out / "metrics.json").write_text(json.dumps(history, indent=2))
-        if out_of_time:
-            print(f"stopping: {args.max_minutes} minute budget reached")
-            break
+            out_of_time = args.max_minutes and elapsed > args.max_minutes * 60
+            if (step + 1) % args.eval_every == 0 or step + 1 == total or out_of_time:
+                v = evaluate()
+                history["evals"].append({"step": step + 1, "valid_loss": v, "elapsed_s": elapsed})
+                print(f"step {step + 1:4d}  valid {v:.4f}", flush=True)
+                (out / "metrics.json").write_text(json.dumps(history, indent=2))
+            if (step + 1) % save_every == 0 or out_of_time:
+                save_checkpoint(step + 1)
+            if out_of_time:
+                print(f"stopping: {args.max_minutes} minute budget reached")
+                break
+    except KeyboardInterrupt:
+        # The steps since the last checkpoint are lost; everything before it resumes.
+        done = len(history["steps"])
+        if done > start:
+            save_checkpoint(done)
+        print(f"\ninterrupted after step {done}; checkpoint saved, continue with --resume")
+        raise SystemExit(130)
 
     model.save_pretrained(out / "adapter")
     tokenizer.save_pretrained(out / "adapter")
