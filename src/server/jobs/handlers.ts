@@ -4,6 +4,7 @@ import { sendReviewRequest } from "@/server/features/reviews";
 import { sendAppointmentReminder } from "@/server/features/reminders";
 import { alertStaff, type AlertUrgency } from "@/server/features/staff-alerts";
 import { deliverWebhook } from "@/server/features/webhooks";
+import { sendCampaignMessage } from "@/server/features/campaigns";
 import { buildReactivationList, logReactivationRun } from "@/server/features/reactivation";
 import { buildConversionEvent, sendToMetaCapi } from "@/server/features/conversions";
 import { extractFeaturesForLead, labelLead } from "@/server/learning/features";
@@ -27,6 +28,11 @@ export const HANDLERS: Record<string, JobHandler> = {
 
   async appointment_reminder(payload) {
     return sendAppointmentReminder(payload);
+  },
+
+  /** One reactivation message, consent re-checked at send time, only inside 10am-7pm. */
+  async campaign_message(payload, tenantId) {
+    return sendCampaignMessage(payload, tenantId);
   },
 
   /** One signed POST to a tenant's CRM / Zapier URL; throws to retry with backoff. */

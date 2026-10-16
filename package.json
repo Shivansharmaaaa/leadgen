@@ -33,6 +33,7 @@
     "settings:test": "tsx --env-file=.env scripts/settings-test.ts",
     "email:test": "tsx --env-file=.env scripts/email-test.ts",
     "erasure:test": "tsx --env-file=.env scripts/erasure-test.ts",
+    "campaigns:test": "tsx --env-file=.env scripts/campaigns-test.ts",
     "imports:test": "tsx scripts/imports-test.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",

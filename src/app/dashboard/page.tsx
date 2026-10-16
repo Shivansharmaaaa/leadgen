@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getDashboard } from "@/server/queries/dashboard";
+import { CampaignButton } from "./CampaignButton";
 
 export const dynamic = "force-dynamic";
 
@@ -199,6 +200,7 @@ export default async function DashboardPage() {
       {data.reactivation.length > 0 && (
         <Section title="Call these back today"
                  hint="Ranked by expected INCREMENTAL value — how much calling changes the outcome, times what the job is worth. Not by who is likeliest to book anyway.">
+          <CampaignButton contactable={data.reactivation.filter((r) => r.contactableVia.some((v) => v === "sms" || v === "email") && r.segment !== "do_not_disturb").length} />
           <Table
             head={["Exp. value", "Segment", "Name", "Service", "Dormant", "Reachable on"]}
             rows={data.reactivation.map((r) => [
