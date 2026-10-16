@@ -12,6 +12,7 @@ import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 import { qualifyFromTranscript } from "./post-turn";
 import { screenScope, overBudget, MAX_AI_TURNS } from "@/server/core/scope";
 import { resolveFastPath, cleanContinuation } from "./fast-path";
+import { routeTurn } from "./router";
 
 /**
  * Low-latency agent turn for spoken channels.
@@ -74,6 +75,17 @@ export const VOICE_TOOLS: ToolSpec[] = TOOL_DEFS
   }));
 
 const VOICE_HISTORY_LIMIT = 10;
+
+/** Map stored messages into the provider-neutral history shape. */
+function llmHistoryFrom(ordered: { direction: string; body: string }[]): LlmHistory {
+  const h: LlmHistory = ordered
+    .filter((m) => m.body.trim().length > 0)
+    .map((m) => m.direction === "inbound"
+      ? ({ role: "user", content: m.body } as const)
+      : ({ role: "assistant", content: m.body } as const));
+  if (h.length === 0) h.push({ role: "user", content: "(the caller is on the line)" });
+  return h;
+}
 const MAX_TOOL_ITERATIONS = 3;
 
 export type VoiceEvent =
@@ -250,6 +262,11 @@ export async function* runVoiceTurn(opts: {
     return;
   }
 
+  const businessNameForRoute = tenant.settings?.businessName ?? tenant.name;
+  const route = latestInbound
+    ? await routeTurn(tenant.id, latestInbound.body, businessNameForRoute)
+    : null;
+
   /**
    * Fast path.
    *
@@ -284,6 +301,110 @@ export async function* runVoiceTurn(opts: {
     }
   }
 
+  /**
+   * Chat tier.
+   *
+   * A greeting or a thank-you does not need eight tool schemas, the whole
+   * knowledge base and a memory lookup to produce one sentence — that is
+   * roughly 2.5k tokens of prefill for something a handful of tokens can
+   * answer. Conversational turns get a lean prompt, no tools and a short
+   * budget; anything that might need a fact or a booking was already routed
+   * to the full path.
+   */
+  if (route?.tier === "chat") {
+    const agentName = tenant.settings?.agentName ?? "Alex";
+    const leanSystem = [
+      `You are ${agentName}, answering the phone for ${businessNameForRoute}.`,
+      "",
+      "You are SPEAKING on a live call. One short sentence, two at most, then stop.",
+      "Use contractions. No markdown, no lists, no emoji, no URLs.",
+      "",
+      "This is small talk, not a service request. Answer what they ACTUALLY said",
+      "and then offer to help — never ask how their day is going, and never ask",
+      "a question that ignores what they just told you.",
+      "",
+      "  greeting      -> greet back, ask what you can help with",
+      "  thanks        -> accept it, ask if there is anything else",
+      "  goodbye       -> say goodbye warmly and stop. Ask nothing.",
+      "  can you hear  -> confirm you can, then ask what they need",
+      "  yes/no/okay   -> acknowledge and move the conversation forward",
+      "",
+      "Never state a price, a time or a policy here — if they ask for one, say",
+      "you'll check and stop.",
+      spokenPrefix ? `\nYou have just said out loud: "${spokenPrefix}" — continue from there, do not repeat it.` : "",
+    ].join("\n");
+
+    const chatProvider = getProvider("voice");
+    const sentencer = makeSentencer({ hadPrefix: Boolean(spokenPrefix) });
+    let chatText = "";
+    let chatIn = 0, chatOut = 0;
+
+    try {
+      if (chatProvider.stream) {
+        const iter = chatProvider.stream({
+          system: leanSystem,
+          history: llmHistoryFrom(ordered),
+          tools: [],
+          maxTokens: 90,
+        });
+        while (true) {
+          const step = await iter.next();
+          if (step.done) {
+            chatIn += step.value?.usage.inputTokens ?? 0;
+            chatOut += step.value?.usage.outputTokens ?? 0;
+            break;
+          }
+          firstWordMs ??= Date.now() - started;
+          chatText += step.value;
+          for (const sent of sentencer.push(step.value)) {
+            yield { type: "sentence", text: sent, msSinceStart: Date.now() - started };
+          }
+        }
+      } else {
+        const turn = await chatProvider.complete({
+          system: leanSystem, history: llmHistoryFrom(ordered), tools: [], maxTokens: 90,
+        });
+        chatText = turn.text;
+        chatIn += turn.usage.inputTokens;
+        chatOut += turn.usage.outputTokens;
+        firstWordMs ??= Date.now() - started;
+      }
+      const rest = sentencer.flush();
+      if (rest) yield { type: "sentence", text: rest, msSinceStart: Date.now() - started };
+    } catch {
+      chatText = "";
+    }
+
+    const spoken = (spokenPrefix ? `${spokenPrefix} ${chatText}` : chatText).trim()
+      || "Sorry, could you say that again?";
+    if (!chatText.trim() && !spokenPrefix) {
+      yield { type: "sentence", text: spoken, msSinceStart: Date.now() - started };
+      firstWordMs ??= Date.now() - started;
+    }
+
+    await db.insert(messagesTable).values({
+      tenantId: tenant.id, conversationId: conversation.id,
+      direction: "outbound", channel: "voice", authorType: "ai",
+      body: spoken, status: "sent", meta: { tier: "chat" },
+    });
+
+    await db.insert(agentRuns).values({
+      tenantId: tenant.id, conversationId: conversation.id,
+      inboundMessageId: opts.inboundMessageId ?? null,
+      model: `${chatProvider.id}:${chatProvider.model}:chat`,
+      toolCalls: [], inputTokens: chatIn, outputTokens: chatOut, cacheReadTokens: 0,
+      latencyMs: Date.now() - started,
+      costUsd: chatProvider.costUsd({ inputTokens: chatIn, outputTokens: chatOut, cacheReadTokens: 0 }).toFixed(6),
+      outcome: "replied",
+    });
+
+    yield {
+      type: "done", fullText: spoken, latencyMs: Date.now() - started,
+      firstWordMs, provider: `${chatProvider.id}:chat`, model: chatProvider.model,
+    };
+    return;
+  }
+
   const [knowledge, memories] = await Promise.all([
     loadKnowledge(tenant.id),
     recall(contact.id, 10),
@@ -293,12 +414,7 @@ export async function* runVoiceTurn(opts: {
     tenant, contact, location, channel: "voice", knowledge, memories,
   });
 
-  const llmHistory: LlmHistory = ordered
-    .filter((m) => m.body.trim().length > 0)
-    .map((m) => m.direction === "inbound"
-      ? ({ role: "user", content: m.body } as const)
-      : ({ role: "assistant", content: m.body } as const));
-  if (llmHistory.length === 0) llmHistory.push({ role: "user", content: "(the caller is on the line)" });
+  const llmHistory = llmHistoryFrom(ordered);
 
   const provider = getProvider("voice");
   const toolRecords: ToolCallRecord[] = [];
