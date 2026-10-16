@@ -27,8 +27,104 @@ export default async function DashboardPage() {
           <Stat label="Replies held for review" value={h.repliesHeld} hint="Guardrail stopped these" />
           <Stat label="AI cost" value={h.aiCost < 0.01 ? "$0.00" : money(h.aiCost)}
                 hint={`${data.agentRuns} runs · ${data.avgLatencyMs}ms avg`} />
+          <Stat label="Opt-outs honoured" value={data.optOuts} hint="STOP, unsubscribe, don't call me" />
         </div>
       </Section>
+
+      {data.coach.needsAttention.length > 0 && (
+        <Section title="Needs your attention"
+                 hint="Conversations where a lead may have slipped. Each line says what was missed, so you can pick it up.">
+          <Table
+            head={["Score", "Customer", "Channel", "What was missed", ""]}
+            rows={data.coach.needsAttention.map((c) => [
+              <ScorePill key="s" score={c.score} />,
+              c.contactName ?? "(unknown)",
+              c.channel,
+              <span key="f" style={{ fontSize: 13 }}>
+                {c.flags.filter((f) => f.severity === "high").map((f) => f.detail).join(" ")}
+              </span>,
+              <Link key="o" href={`/inbox?c=${c.conversationId}`} style={{ color: "var(--accent)", fontSize: 13 }}>open</Link>,
+            ])}
+          />
+        </Section>
+      )}
+
+      {data.coach.scored > 0 && (
+        <Section title="How the conversations went"
+                 hint={`${data.coach.scored} scored · average ${data.coach.averageScore}/100. Every flag is a rule over the transcript, not a guess.`}>
+          <div style={grid}>
+            <Stat label="Booked" value={data.coach.outcomes.booked} accent />
+            <Stat label="Lead captured" value={data.coach.outcomes.lead_captured} />
+            <Stat label="Handed to a person" value={data.coach.outcomes.escalated} />
+            <Stat label="Still talking" value={data.coach.outcomes.engaged} />
+            <Stat label="Went quiet" value={data.coach.outcomes.abandoned} />
+          </div>
+          {data.coach.flags.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <Table
+                head={["Missed", "How often", "Example"]}
+                rows={data.coach.flags.map((f) => [
+                  <span key="c" style={{ color: f.severity === "high" ? "var(--danger)" : f.severity === "medium" ? "var(--warn)" : "var(--muted)" }}>
+                    {FLAG_LABEL[f.code] ?? f.code}
+                  </span>,
+                  f.count,
+                  <span key="e" style={{ fontSize: 13, color: "var(--muted)" }}>{f.example}</span>,
+                ])}
+              />
+            </div>
+          )}
+        </Section>
+      )}
+
+      {data.leadSources.length > 0 && (
+        <Section title="Which lead sources turn into jobs"
+                 hint="Where to spend: the share of each source's leads that booked.">
+          <Table
+            head={["Source", "Leads", "Booked", "Booked rate"]}
+            rows={data.leadSources.map((s) => [
+              SOURCE_LABEL[s.source] ?? s.source, s.leads, s.booked,
+              `${s.leads ? Math.round((s.booked / s.leads) * 100) : 0}%`,
+            ])}
+          />
+        </Section>
+      )}
+
+      {data.forms.problems.length > 0 && (
+        <Section title="Fix on your website"
+                 hint={`${data.forms.leadsNotTexted} form lead(s) could not be texted automatically because the consent wording on the form is incomplete. They were held for your team instead. Changing the wording fixes it for every future lead.`}>
+          <Table
+            head={["What the consent text is missing", "Leads affected"]}
+            rows={data.forms.problems.map(([problem, n]) => [problem, n])}
+          />
+        </Section>
+      )}
+
+      {(data.appointmentsOps.remindersSent > 0 || data.appointmentsOps.rescheduleRequests > 0) && (
+        <Section title="Appointments" hint="Reminders go the day before and on the day; customers reply C to confirm or R to move it.">
+          <div style={grid}>
+            <Stat label="Reminders sent" value={data.appointmentsOps.remindersSent} />
+            <Stat label="Confirmed by the customer" value={data.appointmentsOps.confirmedByCustomer} accent />
+            <Stat label="Waiting to be rescheduled" value={data.appointmentsOps.rescheduleRequests}
+                  hint={data.appointmentsOps.rescheduleRequests ? "Someone needs to find them a new time" : undefined} />
+            <Stat label="No-shows" value={data.appointmentsOps.noShows} />
+          </div>
+        </Section>
+      )}
+
+      {(data.alerts.sent + data.alerts.failed + data.alerts.heldForOpening > 0 || data.alerts.problems.length > 0) && (
+        <Section title="Team alerts" hint="Texts to your team when the AI hands a conversation over. Emergencies go to whoever is on call, at any hour.">
+          <div style={grid}>
+            <Stat label="Alerts delivered" value={data.alerts.sent} accent />
+            <Stat label="Held until opening" value={data.alerts.heldForOpening} hint="Not urgent, so nobody was woken" />
+            <Stat label="Failed" value={data.alerts.failed} />
+          </div>
+          {data.alerts.problems.length > 0 && (
+            <p style={{ color: "var(--danger)", fontSize: 13, marginTop: 10 }}>
+              Not reaching your team: {data.alerts.problems.join("; ")}. Add staff phone numbers, and connect Twilio.
+            </p>
+          )}
+        </Section>
+      )}
 
       <Section title="Speed to lead" hint="The strongest predictor of conversion in local services">
         <div style={grid}>
@@ -146,6 +242,25 @@ export default async function DashboardPage() {
 }
 
 /* ── pieces ─────────────────────────────────────────────────────────────── */
+
+const FLAG_LABEL: Record<string, string> = {
+  time_asked_not_offered: "Asked for a time, never offered one",
+  no_contact_details: "Ended with no number or email",
+  reply_stuck_in_review: "Reply stuck waiting for review",
+  escalation_unanswered: "Handed over, nobody replied",
+  emergency_not_booked: "Emergency not booked",
+  price_not_answered: "Price question not answered",
+  slow_first_reply: "Slow first reply",
+  went_quiet_no_follow_up: "Went quiet, no follow-up",
+  agent_repeated_itself: "Agent repeated itself",
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  website: "Website form", google_lsa: "Google Local Services", angi: "Angi", thumbtack: "Thumbtack",
+  facebook_lead_ad: "Facebook lead ads", zapier: "Zapier", other: "Other form",
+  voice: "Phone calls", sms: "Texts", webchat: "Web chat", instagram: "Instagram",
+  messenger: "Messenger", whatsapp: "WhatsApp", email: "Email",
+};
 
 const grid: React.CSSProperties = {
   display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12,

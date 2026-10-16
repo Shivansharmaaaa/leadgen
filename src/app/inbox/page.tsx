@@ -9,8 +9,9 @@ const CHANNEL_ICON: Record<string, string> = {
   instagram: "📷", messenger: "💬", whatsapp: "🟢", gbp_review: "⭐",
 };
 
-export default async function InboxPage() {
-  const data = await getInbox("northside-hvac");
+export default async function InboxPage({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
+  const { c } = await searchParams;
+  const data = await getInbox("northside-hvac", c);
   if (!data) {
     return (
       <main style={{ maxWidth: 600, margin: "0 auto", padding: 64 }}>
@@ -36,8 +37,9 @@ export default async function InboxPage() {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 28 }}>
         {data.threads.map(({ conversation, contact, messages }) => (
-          <article key={conversation.id} style={{
-            border: "1px solid var(--border)", borderRadius: "var(--radius)",
+          <article key={conversation.id} id={conversation.id} style={{
+            border: `1px solid ${conversation.id === data.focus ? "var(--accent)" : "var(--border)"}`,
+            borderRadius: "var(--radius)",
             background: "var(--panel)", overflow: "hidden",
           }}>
             <header style={{

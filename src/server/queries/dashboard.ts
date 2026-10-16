@@ -1,8 +1,11 @@
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import {
-  db, tenants, events, leads, appointments, conversations, messages, agentRuns, contacts,
+  db, tenants, events, leads, appointments, conversations, messages, agentRuns, contacts, locations,
+  type BusinessHours,
 } from "@/server/db";
 import { slaReport } from "@/server/features/sla";
+import { coachReport } from "@/server/features/scoring";
+import { isOpen } from "@/server/features/staff-alerts";
 import { buildReactivationList } from "@/server/features/reactivation";
 import { findCrossSellOpportunities } from "@/server/features/referrals";
 import { measureLift, type LiftReport } from "@/server/learning/incrementality";
@@ -21,7 +24,7 @@ export async function getDashboard(tenantSlug: string, days = 30) {
 
   const since = new Date(Date.now() - days * 86400_000);
 
-  const [evs, leadRows, apptRows, convRows, runs, sla, reactivation, crossSell] =
+  const [evs, leadRows, apptRows, convRows, runs, sla, reactivation, crossSell, coach, location] =
     await Promise.all([
       db.query.events.findMany({
         where: and(eq(events.tenantId, tenant.id), gte(events.createdAt, since)),
@@ -43,6 +46,8 @@ export async function getDashboard(tenantSlug: string, days = 30) {
       slaReport(tenant.id, days),
       buildReactivationList(tenant.id, { minDaysDormant: 7, limit: 8 }),
       findCrossSellOpportunities(tenant.id, 8),
+      coachReport(tenant.id, days),
+      db.query.locations.findFirst({ where: eq(locations.tenantId, tenant.id) }),
     ]);
 
   const count = (type: string) => evs.filter((e) => e.type === type).length;
@@ -60,10 +65,40 @@ export async function getDashboard(tenantSlug: string, days = 30) {
   const byChannel = new Map<string, number>();
   for (const c of convRows) byChannel.set(c.channel, (byChannel.get(c.channel) ?? 0) + 1);
 
-  const afterHoursConversations = convRows.filter((c) => {
-    const h = c.createdAt.getUTCHours();
-    return h < 12 || h >= 22; // crude UTC proxy for outside 8-5 Eastern
-  }).length;
+  // Against the business's own hours and time zone (this was a UTC proxy
+  // for 8-5 Eastern, wrong for every other tenant).
+  const tz = location?.timezone ?? tenant.timezone;
+  const hours = (location?.hours ?? []) as BusinessHours[];
+  const afterHoursConversations = hours.length
+    ? convRows.filter((c) => !isOpen(c.createdAt, hours, tz)).length
+    : 0;
+
+  // Which lead sources turn into jobs. A source is the form or marketplace
+  // when intake recorded one, otherwise the channel the person used.
+  const sourceRows = new Map<string, { source: string; leads: number; booked: number }>();
+  for (const l of leadRows) {
+    const key = l.source ?? l.sourceChannel;
+    const row = sourceRows.get(key) ?? { source: key, leads: 0, booked: 0 };
+    row.leads++;
+    if (l.status === "booked" || l.status === "won") row.booked++;
+    sourceRows.set(key, row);
+  }
+
+  // What the client's website forms are getting wrong, in their words.
+  const formProblems = new Map<string, number>();
+  let leadsNotTexted = 0;
+  for (const e of evs.filter((e) => e.type === "lead_intake")) {
+    const consent = e.payload.consent as { sms?: boolean; problems?: string[] } | undefined;
+    if (consent && consent.sms === false) {
+      leadsNotTexted++;
+      for (const p of consent.problems ?? []) formProblems.set(p, (formProblems.get(p) ?? 0) + 1);
+    }
+  }
+
+  const alertEvents = evs.filter((e) => e.type === "staff_alert");
+  const alertRecipients = alertEvents.flatMap((e) => (e.payload.recipients as { ok?: boolean; error?: string }[] | undefined) ?? []);
+  const alertErrors = [...new Set(alertRecipients.filter((r) => !r.ok && r.error).map((r) => r.error!))];
+  const alertProblems = [...new Set(alertEvents.map((e) => e.payload.problem).filter((p): p is string => typeof p === "string"))];
 
   const booked = apptRows.filter((a) => a.status === "confirmed" || a.status === "completed");
   const pipelineValue = leadRows.reduce((s, l) => s + Number(l.estimatedValue ?? 0), 0);
@@ -84,6 +119,25 @@ export async function getDashboard(tenantSlug: string, days = 30) {
       aiCost,
     },
     sla,
+    coach,
+    leadSources: [...sourceRows.values()].sort((a, b) => b.leads - a.leads),
+    forms: {
+      leadsNotTexted,
+      problems: [...formProblems.entries()].sort((a, b) => b[1] - a[1]),
+    },
+    appointmentsOps: {
+      remindersSent: evs.filter((e) => e.type === "appointment_reminder" && e.payload.sent === true).length,
+      confirmedByCustomer: apptRows.filter((a) => a.customerConfirmedAt).length,
+      rescheduleRequests: apptRows.filter((a) => a.rescheduleRequestedAt && a.status === "pending").length,
+      noShows: apptRows.filter((a) => a.status === "no_show").length,
+    },
+    alerts: {
+      sent: alertRecipients.filter((r) => r.ok).length,
+      failed: alertRecipients.filter((r) => !r.ok).length,
+      heldForOpening: alertEvents.filter((e) => e.payload.deferredUntil).length,
+      problems: [...alertErrors, ...alertProblems],
+    },
+    optOuts: count("opt_out"),
     byChannel: [...byChannel.entries()].sort((a, b) => b[1] - a[1]),
     recentLeads: leadRows.slice(0, 10),
     upcomingAppointments: apptRows
@@ -100,15 +154,23 @@ export async function getDashboard(tenantSlug: string, days = 30) {
   };
 }
 
-export async function getInbox(tenantSlug: string) {
+export async function getInbox(tenantSlug: string, focus?: string) {
   const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, tenantSlug) });
   if (!tenant) return null;
 
-  const convos = await db.query.conversations.findMany({
+  const latest = await db.query.conversations.findMany({
     where: eq(conversations.tenantId, tenant.id),
     orderBy: desc(conversations.lastMessageAt),
     limit: 40,
   });
+  // A thread linked from a staff alert or the dashboard goes first, even if
+  // it has dropped out of the latest 40.
+  const focused = focus && /^[0-9a-f-]{36}$/i.test(focus)
+    ? await db.query.conversations.findFirst({
+        where: and(eq(conversations.tenantId, tenant.id), eq(conversations.id, focus)),
+      })
+    : undefined;
+  const convos = focused ? [focused, ...latest.filter((c) => c.id !== focused.id)] : latest;
 
   const threads = await Promise.all(
     convos.map(async (c) => {
@@ -124,7 +186,7 @@ export async function getInbox(tenantSlug: string) {
     }),
   );
 
-  return { tenant, threads };
+  return { tenant, threads, focus: focused?.id ?? null };
 }
 
 /** Every channel one person is reachable on — the cross-channel timeline. */

@@ -105,7 +105,8 @@ export function scoreTranscript(t: Transcript): { outcome: Outcome; flags: Flag[
     now.getTime() - h.createdAt.getTime() > 15 * 60_000 && !reached.some((r) => r.createdAt > h.createdAt));
   if (stuck) {
     flags.push({ code: "reply_stuck_in_review", severity: "high",
-      detail: `A reply has waited for review since ${stuck.createdAt.toISOString()} and nothing else was sent` +
+      detail: `A reply has waited ${formatSeconds(Math.round((now.getTime() - stuck.createdAt.getTime()) / 1000))} ` +
+        "for review and nothing else was sent" +
         (stuck.meta?.holdReason ? ` (held: ${stuck.meta.holdReason})` : "") + "." });
   }
 
@@ -224,7 +225,8 @@ function clip(s: string, n = 80): string {
 function formatSeconds(s: number): string {
   if (s < 120) return `${s}s`;
   if (s < 7200) return `${Math.round(s / 60)} min`;
-  return `${Math.round(s / 3600)} h`;
+  if (s < 172800) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} days`;
 }
 
 function normalise(s: string): string {
