@@ -266,10 +266,11 @@ export default async function DashboardPage() {
       {data.recentLeads.length > 0 && (
         <Section title="Recent leads">
           <Table
-            head={["Score", "Service", "Urgency", "Status", "Channel"]}
+            head={["Score", "Service", "Urgency", "Status", "From"]}
             rows={data.recentLeads.map((l) => [
               <ScorePill key="s" score={l.score} />,
-              l.service ?? "—", l.urgency ?? "—", l.status, l.sourceChannel,
+              l.service ?? "—", l.urgency ?? "—", l.status,
+              SOURCE_LABEL[l.source ?? l.sourceChannel] ?? l.source ?? l.sourceChannel,
             ])}
           />
         </Section>
