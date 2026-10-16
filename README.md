@@ -113,6 +113,8 @@ SMTP_HOST=... EMAIL_FROM=... # email out; EMAIL_INBOUND_TOKEN=... for email in
 TWILIO_ACCOUNT_SID=... TWILIO_AUTH_TOKEN=...   # texts, alerts, calls
 ```
 
+`npm run doctor` lists what is set up, what isn't, and how to fix each.
+
 Then at `/settings`: add the team's mobiles (and who is on call), create an
 intake key, paste the chat snippet on the website and list the site, and add
 a CRM endpoint. Run `npm run worker` so reminders, alerts, webhooks, campaigns,
