@@ -7,6 +7,7 @@ import { classifyInterruption, endpointDelayMs } from "./turn-taking";
 const FILLERS = ["Let me see.", "One second.", "Mm, okay.", "Right."];
 
 const SIGNAL_COLOUR: Record<string, string> = {
+  "low confidence": "var(--danger)",
   "backchannel": "var(--accent)",
   "barge-in": "var(--warn)",
   "endpointing": "var(--muted)",
@@ -78,6 +79,9 @@ export default function VoicePage() {
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = "en-US";
+    // Ask for alternatives so a low-confidence first guess can be replaced by
+    // a better-scoring one, rather than being taken as what was said.
+    rec.maxAlternatives = 3;
     recognitionRef.current = rec;
   }, []);
 
@@ -389,10 +393,30 @@ export default function VoicePage() {
     rec.onresult = (e: any) => {
       let finalText = "";
       let interimText = "";
+      let lowestConfidence = 1;
+
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        const chunk = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += chunk;
-        else interimText += chunk;
+        const result = e.results[i];
+
+        // Prefer the highest-confidence alternative, not simply the first.
+        let best = result[0];
+        for (let k = 1; k < result.length; k++) {
+          if ((result[k]?.confidence ?? 0) > (best?.confidence ?? 0)) best = result[k];
+        }
+        const chunk = best?.transcript ?? result[0].transcript;
+
+        if (result.isFinal) {
+          finalText += chunk;
+          const c = best?.confidence ?? 1;
+          if (c > 0) lowestConfidence = Math.min(lowestConfidence, c);
+        } else {
+          interimText += chunk;
+        }
+      }
+
+      // Surface a shaky transcript rather than acting on it silently.
+      if (finalText.trim() && lowestConfidence < 0.65) {
+        note("low confidence", `${(lowestConfidence * 100).toFixed(0)}% — "${finalText.trim().slice(0, 30)}"`);
       }
 
       // Only a real floor grab stops the agent. "mm-hmm" and "right" mean
@@ -470,10 +494,24 @@ export default function VoicePage() {
       setTurns((t) => [...t, { who: "system", text: `mic error: ${e.error}` }]);
     };
 
-    // Chrome ends the session periodically even with continuous = true.
+    /**
+     * Chrome ends a recognition session every few seconds even with
+     * `continuous` set, and audio spoken during the gap is simply lost —
+     * which is why a sentence sometimes arrives with its middle missing.
+     * Restarting on the same tick keeps that window as small as the API
+     * allows; a failed immediate restart is retried once on the next frame
+     * rather than waiting for a timer.
+     */
     rec.onend = () => {
       if (!wantListening.current) { setListening(false); return; }
-      try { rec.start(); } catch { /* already starting */ }
+      try {
+        rec.start();
+      } catch {
+        requestAnimationFrame(() => {
+          if (!wantListening.current) return;
+          try { rec.start(); } catch { /* already running */ }
+        });
+      }
     };
 
     try { rec.start(); setListening(true); } catch { /* already running */ }
