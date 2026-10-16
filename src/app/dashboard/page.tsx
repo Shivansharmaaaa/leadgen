@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDashboard } from "@/server/queries/dashboard";
 import { CampaignButton } from "./CampaignButton";
+import { closeJob } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,25 @@ export default async function DashboardPage() {
           <Stat label="Opt-outs honoured" value={data.optOuts} hint="STOP, unsubscribe, don't call me" />
         </div>
       </Section>
+
+      {data.jobsToClose.length > 0 && (
+        <Section title="How did these jobs go?"
+                 hint="Marking a job done wins the lead and asks the customer for a review three hours later. No-shows are counted.">
+          <Table
+            head={["When", "Job", ""]}
+            rows={data.jobsToClose.map((a) => [
+              a.startsAt.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+              a.service,
+              <form key="f" action={closeJob} style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                <input type="hidden" name="appointmentId" value={a.id} />
+                <button name="outcome" value="completed" style={jobButton("var(--accent)")}>Done</button>
+                <button name="outcome" value="no_show" style={jobButton("var(--warn)")}>No-show</button>
+                <button name="outcome" value="cancelled" style={jobButton("var(--muted)")}>Cancelled</button>
+              </form>,
+            ])}
+          />
+        </Section>
+      )}
 
       {data.coach.needsAttention.length > 0 && (
         <Section title="Needs your attention"
@@ -248,6 +268,11 @@ export default async function DashboardPage() {
 }
 
 /* ── pieces ─────────────────────────────────────────────────────────────── */
+
+const jobButton = (colour: string): React.CSSProperties => ({
+  fontSize: 12, padding: "3px 10px", borderRadius: 20, background: "transparent",
+  color: colour, border: `1px solid ${colour}`, cursor: "pointer",
+});
 
 const FLAG_LABEL: Record<string, string> = {
   time_asked_not_offered: "Asked for a time, never offered one",
