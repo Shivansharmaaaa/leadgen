@@ -29,6 +29,18 @@ model page, then `hf auth login`).
 
 On an Apple Silicon Mac the trainer runs on the GPU (`mps`) with no flags.
 
+## Using the published adapter
+
+The 3B adapter trained below is in
+[`models/Llama-3.2-3B-Leadgen-Voice-LoRA`](../models/Llama-3.2-3B-Leadgen-Voice-LoRA/)
+(fp32, built with Llama). To serve it without training:
+
+```bash
+.venv/bin/python finetune/fetch_base.py 3b
+.venv/bin/python finetune/export_ollama.py --adapter models/Llama-3.2-3B-Leadgen-Voice-LoRA \
+  --tag llama3.2-leadgen-voice:3b --llama-cpp ~/src/llama.cpp
+```
+
 ## Running it on a Mac
 
 Apple Silicon runs this on the GPU through PyTorch's `mps` backend with no

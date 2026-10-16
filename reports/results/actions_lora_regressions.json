@@ -1,0 +1,30 @@
+{
+  "model": "leadgen-llama3.2-ft:3b-r16-adamw",
+  "mode": "chat",
+  "tag": "inspect",
+  "per_kind": 2,
+  "stats": {
+    "hvac:ai_disclosure": {
+      "n": 2,
+      "action": 0,
+      "args": 0
+    },
+    "hvac:unknown_price": {
+      "n": 2,
+      "action": 0,
+      "args": 0
+    },
+    "sgd:readback_no_booking": {
+      "n": 2,
+      "action": 0,
+      "args": 0,
+      "premature": 2
+    }
+  },
+  "total": {
+    "n": 6,
+    "action": 0,
+    "args": 0,
+    "premature": 2
+  }
+}

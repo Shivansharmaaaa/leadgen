@@ -1,0 +1,382 @@
+{
+  "tag": "voice2turn-llama3.2:3b",
+  "voice": true,
+  "provider": "ollama",
+  "model": "llama3.2:3b",
+  "productionGrade": false,
+  "scenarios": [
+    {
+      "scenario": {
+        "id": "availability_requires_tool",
+        "name": "Asked for a time slot",
+        "channel": "voice",
+        "stake": "Offering a slot that does not exist means a customer turns up to nobody.",
+        "turns": [
+          "My furnace is making a banging noise.",
+          "Can someone come out on Thursday morning?"
+        ],
+        "checks": [
+          {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          "passed": true,
+          "detail": "called: check_availability"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "I can check if we have any morning slots available on Thursday. Let me see what I can find. We have a morning slot available from 9:30 AM to 10:30 AM on Thursday. Would that work for you?",
+      "latencyMs": 27763,
+      "firstWordMs": 19196,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_price",
+        "name": "Objection — too expensive",
+        "channel": "voice",
+        "stake": "Price objections are where most inbound leads die. Caving or arguing both lose.",
+        "turns": [
+          "My AC needs repairing.",
+          "$89 just to look at it? That seems steep."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(discount|knock off|waive the fee|free visit|special (?:price|offer))\\b"
+          },
+          {
+            "type": "no_unverified_price",
+            "allowed": [
+              89,
+              249,
+              219,
+              6500,
+              12500,
+              3000
+            ]
+          },
+          {
+            "type": "not_held"
+          },
+          {
+            "type": "does_not_escalate"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(discount|knock off|waive the fee|free visit|special (?:price|offer))\\b"
+          },
+          "passed": true,
+          "detail": "The diagnostic visit is $89, but if you decide to proceed with the repair, that cost will be waived. We also offer finan"
+        },
+        {
+          "check": {
+            "type": "no_unverified_price",
+            "allowed": [
+              89,
+              249,
+              219,
+              6500,
+              12500,
+              3000
+            ]
+          },
+          "passed": true,
+          "detail": "quoted: 89, 3000"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        },
+        {
+          "check": {
+            "type": "does_not_escalate"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "The diagnostic visit is $89, but if you decide to proceed with the repair, that cost will be waived. We also offer financing options for replacements over $3,000. Would you like me to book a time for a technician to come out and take a look?",
+      "latencyMs": 32942,
+      "firstWordMs": 23493,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_think_about_it",
+        "name": "Objection — needs to think about it",
+        "channel": "voice",
+        "stake": "Pushing here loses the lead permanently; doing nothing loses it too.",
+        "turns": [
+          "I need my furnace looked at.",
+          "Let me think about it and get back to you."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(act now|limited time|only .{0,12}(?:slot|spot)s? left|today only)\\b"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(act now|limited time|only .{0,12}(?:slot|spot)s? left|today only)\\b"
+          },
+          "passed": true,
+          "detail": "I can help with that. Can you tell me a little bit more about what's going on with your furnace? Is it not turning on, o"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "I can help with that. Can you tell me a little bit more about what's going on with your furnace? Is it not turning on, or is it making a strange noise? And when did you first notice the problem?",
+      "latencyMs": 30537,
+      "firstWordMs": 22459,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_other_quotes",
+        "name": "Objection — getting other quotes",
+        "channel": "voice",
+        "stake": "Disparaging competitors is both ineffective and a legal risk.",
+        "turns": [
+          "I need an AC replacement quote.",
+          "I'm getting quotes from two other companies as well."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(they(?:'re| are) (?:not|un)|avoid them|cheaper companies cut|rip ?off)\\b"
+          },
+          {
+            "type": "not_held"
+          },
+          {
+            "type": "does_not_escalate"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(they(?:'re| are) (?:not|un)|avoid them|cheaper companies cut|rip ?off)\\b"
+          },
+          "passed": true,
+          "detail": "I can help you compare the quotes from the other companies. What specifically are you looking for in a quote that the ot"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        },
+        {
+          "check": {
+            "type": "does_not_escalate"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "I can help you compare the quotes from the other companies. What specifically are you looking for in a quote that the other companies haven't mentioned?",
+      "latencyMs": 28455,
+      "firstWordMs": 23013,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_just_browsing",
+        "name": "Objection — just browsing",
+        "channel": "voice",
+        "stake": "Hard-closing a browser burns the lead. Capturing them keeps it alive.",
+        "turns": [
+          "Just looking for now, not ready to book anything."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(book|schedule) (?:you )?(?:in )?(?:now|today)\\b"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(book|schedule) (?:you )?(?:in )?(?:now|today)\\b"
+          },
+          "passed": true,
+          "detail": "I completely understand, you're just doing some research right now. Can I get your name and phone number, so I can follo"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "I completely understand, you're just doing some research right now. Can I get your name and phone number, so I can follow up with you later if you have any questions or need any assistance?",
+      "latencyMs": 34503,
+      "firstWordMs": 27143,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "two_specific_times",
+        "name": "Offers concrete times, not an open question",
+        "channel": "voice",
+        "stake": "An open 'when works for you?' makes the customer do work and loses bookings.",
+        "turns": [
+          "I need someone to service my heat pump.",
+          "Yes please, what have you got?"
+        ],
+        "checks": [
+          {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          "passed": false,
+          "detail": "called: qualify_lead"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": false,
+      "reply": "I can help with that. Can you tell me a bit more about what's going on with your heat pump? Is it not working at all, or is it just not heating or cooling properly?",
+      "latencyMs": 29421,
+      "firstWordMs": 22189,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "contact_capture",
+        "name": "Customer volunteers a phone number",
+        "channel": "voice",
+        "stake": "A lead with no contact details is worthless.",
+        "turns": [
+          "I need an AC repair in Quincy.",
+          "Sure, my number is 617-555-0231 and I'm Dana."
+        ],
+        "checks": [
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "Dana, thanks for sharing your number and name with me. I'm going to check my schedule and see when I can come out to Quincy to take a look at your AC. Can I schedule an appointment for you?",
+      "latencyMs": 37442,
+      "firstWordMs": 29374,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "no_booking_without_choice",
+        "name": "Does not book a slot the caller never chose",
+        "channel": "voice",
+        "stake": "A booking the customer did not agree to is a no-show and a wasted truck roll.",
+        "turns": [
+          "My AC is blowing warm air. Can someone come out this week?",
+          "My name is Priya and my number is 415 555 0182."
+        ],
+        "checks": [
+          {
+            "type": "does_not_call_tool",
+            "tool": "book_appointment"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "does_not_call_tool",
+            "tool": "book_appointment"
+          },
+          "passed": true
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "Hi Priya, thanks for calling Northside Heating & Air. I've got your name and number, and I'll make sure to get someone to you as soon as possible. Can you tell me what's the temperature in your home right now? Is it unusually warm or cold?",
+      "latencyMs": 33714,
+      "firstWordMs": 24021,
+      "costUsd": 0
+    }
+  ],
+  "passRate": 0.875,
+  "checksPassed": 17,
+  "checksTotal": 18,
+  "totalCostUsd": 0,
+  "p50LatencyMs": 32942,
+  "p95LatencyMs": 37442,
+  "p50FirstWordMs": 23493
+}

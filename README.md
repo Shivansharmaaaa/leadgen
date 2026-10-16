@@ -68,6 +68,10 @@ LoRA fine-tune gets the speed without losing tool use. Use Chrome: the page uses
 On Apple Silicon Ollama runs on the GPU (Metal) by itself.
 `npm run voice:check` re-runs just the model and database checks.
 
+What changed in the voice agent and the local model, with every measurement:
+[`CHANGES_REPORT.md`](CHANGES_REPORT.md). A fine-tuned voice adapter (built
+with Llama) is in [`models/Llama-3.2-3B-Leadgen-Voice-LoRA`](models/Llama-3.2-3B-Leadgen-Voice-LoRA/).
+
 ## Switching to production quality
 
 The local 8B model proves the plumbing but is not representative of reply

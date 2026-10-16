@@ -4,6 +4,10 @@ Serve a trained adapter from Ollama, quantised exactly like the stock model.
     python finetune/export_ollama.py --run r16-adamw --llama-cpp ~/src/llama.cpp
     # -> ollama model  leadgen-llama3.2-ft:r16-adamw  (Q4_K_M)
 
+    # the adapter published in this repo:
+    python finetune/export_ollama.py --adapter models/Llama-3.2-3B-Leadgen-Voice-LoRA \
+        --tag llama3.2-leadgen-voice:3b --llama-cpp ~/src/llama.cpp
+
 Current Ollama refuses LoRA adapters ("LoRA adapters are no longer
 supported") and its safetensors import only offers its own formats (int4,
 int8, mxfp4...), not the Q4_K_M that llama3.2:3b ships as. A fine-tune scored
@@ -48,7 +52,10 @@ def find_quantizer(explicit: str | None) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run", required=True)
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--run", help="a training run under data/finetune/runs/")
+    src.add_argument("--adapter", help="any PEFT adapter directory, e.g. one published in models/")
+    ap.add_argument("--tag", help="Ollama model name (default leadgen-llama3.2-ft:<run>)")
     ap.add_argument("--base", help="defaults to the base recorded in the adapter config")
     ap.add_argument("--llama-cpp", default=os.environ.get("LLAMA_CPP_DIR", "/opt/src/llama.cpp"),
                     help="llama.cpp checkout containing convert_hf_to_gguf.py")
@@ -66,10 +73,21 @@ def main():
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    run = ROOT / "data/finetune/runs" / args.run
-    adapter = run / "adapter"
+    if args.run:
+        run = ROOT / "data/finetune/runs" / args.run
+        adapter = run / "adapter"
+        tag = args.tag or f"leadgen-llama3.2-ft:{args.run}"
+    else:
+        adapter = Path(args.adapter).resolve()
+        # Intermediates go to a scratch dir, never next to the published files.
+        run = ROOT / "data/finetune/export" / adapter.name
+        run.mkdir(parents=True, exist_ok=True)
+        tag = args.tag or f"{adapter.name.lower()}:latest"
     base = args.base or json.loads((adapter / "adapter_config.json").read_text())["base_model_name_or_path"]
     base_path = (ROOT / base) if (ROOT / base).exists() else None
+    if base_path is None and (base.startswith(("data/", "/", ".")) or base.count("/") != 1):
+        raise SystemExit(f"base weights not found at {base} — run `python finetune/fetch_base.py 3b`, "
+                         "or pass --base meta-llama/Llama-3.2-3B-Instruct")
     merged, f16, quantised = run / "merged", run / "ft-f16.gguf", run / f"ft-{args.quant.lower()}.gguf"
 
     # 1. merge
@@ -99,7 +117,6 @@ def main():
     # 4. serve with the template it was trained on
     stock = (ROOT / "models/leadgen-llama3.2.Modelfile").read_text()
     (run / "Modelfile").write_text(re.sub(r"^FROM .*$", f"FROM {quantised}", stock, count=1, flags=re.M))
-    tag = f"leadgen-llama3.2-ft:{args.run}"
     subprocess.run(["ollama", "create", tag, "-f", str(run / "Modelfile")], check=True)
     quantised.unlink()
     print(f"✓ ollama model {tag}")

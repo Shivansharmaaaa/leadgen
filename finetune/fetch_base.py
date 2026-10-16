@@ -18,6 +18,8 @@ import argparse
 import hashlib
 import json
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -26,9 +28,23 @@ TAGS = {"1b": "1B-F16", "3b": "3B-F16"}
 GGUF_MEDIA_TYPE = "application/vnd.docker.ai.gguf.v3"
 
 
+def _open(req: urllib.request.Request | str, timeout: int = 60):
+    """Docker Hub rate-limits anonymous pulls per IP (100/hour); wait out a 429."""
+    for attempt in range(6):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as err:
+            if err.code != 429 or attempt == 5:
+                raise
+            wait = int(err.headers.get("Retry-After") or 0) or 30 * 2 ** attempt
+            print(f"  Docker Hub rate limit (429), retrying in {wait}s")
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
 def _get(url: str, token: str, accept: str | None = None):
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", **({"Accept": accept} if accept else {})})
-    return urllib.request.urlopen(req, timeout=60)
+    return _open(req)
 
 
 def download(size: str, dest: Path) -> Path:
@@ -39,7 +55,7 @@ def download(size: str, dest: Path) -> Path:
         return path
 
     tok_url = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:ai/llama3.2:pull"
-    token = json.loads(urllib.request.urlopen(tok_url, timeout=30).read())["token"]
+    token = json.loads(_open(tok_url, timeout=30).read())["token"]
     manifest = json.loads(_get(
         f"https://registry-1.docker.io/v2/ai/llama3.2/manifests/{TAGS[size]}", token,
         "application/vnd.oci.image.manifest.v1+json").read())
