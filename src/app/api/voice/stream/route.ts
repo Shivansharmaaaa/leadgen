@@ -18,8 +18,9 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
-    sessionId?: string; text?: string; tenant?: string;
+    sessionId?: string; text?: string; tenant?: string; speculative?: boolean;
   };
+  const speculative = Boolean(body.speculative);
 
   const text = (body.text ?? "").trim();
   if (!text) return new Response("text is required", { status: 400 });
@@ -56,6 +57,7 @@ export async function POST(req: Request) {
   const [inbound] = await db.insert(messagesTable).values({
     tenantId: tenant.id, conversationId: conversation.id,
     direction: "inbound", channel: "voice", authorType: "contact", body: text,
+    meta: speculative ? { speculative: true } : {},
   }).returning();
 
   await extractMemories({
@@ -64,22 +66,46 @@ export async function POST(req: Request) {
   });
 
   const encoder = new TextEncoder();
+  let completed = false;
+
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: unknown) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      const send = (event: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          /* client went away mid-turn */
+        }
+      };
       try {
         for await (const ev of runVoiceTurn({
           conversationId: conversation!.id,
           inboundMessageId: inbound.id,
+          speculative,
         })) {
           send(ev);
+        }
+        completed = true;
+        // The guess held: it is an ordinary turn now.
+        if (speculative) {
+          await db.update(messagesTable).set({ meta: {} })
+            .where(eq(messagesTable.id, inbound.id));
         }
       } catch (err) {
         send({ type: "error", message: err instanceof Error ? err.message : String(err) });
       } finally {
-        controller.close();
+        try { controller.close(); } catch { /* already closed */ }
       }
+    },
+
+    /**
+     * The client aborted — speech recognition settled on something other than
+     * the guess. Remove the misheard utterance so it never becomes history
+     * the next turn reasons from.
+     */
+    async cancel() {
+      if (completed || !speculative) return;
+      await db.delete(messagesTable).where(eq(messagesTable.id, inbound.id));
     },
   });
 

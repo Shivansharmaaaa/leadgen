@@ -117,6 +117,13 @@ function makeSentencer() {
 export async function* runVoiceTurn(opts: {
   conversationId: string;
   inboundMessageId?: string;
+  /**
+   * The turn was started on a guess at what the caller said, before speech
+   * recognition confirmed it. Irreversible tools are withheld: booking a job
+   * from a misheard sentence is far worse than the second of latency the
+   * guess was saving.
+   */
+  speculative?: boolean;
 }): AsyncGenerator<VoiceEvent> {
   const started = Date.now();
   let firstWordMs: number | null = null;
@@ -155,7 +162,7 @@ export async function* runVoiceTurn(opts: {
     hasName: Boolean(contact.displayName),
     hasPhone: Boolean(contact.primaryPhone),
     offeredSlot,
-  });
+  }).filter((t) => !(opts.speculative && t.name === "book_appointment"));
 
   // Gate 1 runs before any generation — an escalation must not wait on tokens.
   if (latestInbound) {

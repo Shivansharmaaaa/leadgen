@@ -23,6 +23,14 @@ export default function VoicePage() {
   const sessionIdRef = useRef<string>("");
   const logRef = useRef<HTMLDivElement>(null);
 
+  /** Keeps the mic alive across Chrome's automatic restarts. */
+  const wantListening = useRef(false);
+  /** The in-flight turn, so a new utterance can cancel it (barge-in). */
+  const inflight = useRef<AbortController | null>(null);
+  /** The utterance a speculative request was started for. */
+  const speculatedFor = useRef<string | null>(null);
+  const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     sessionIdRef.current = `browser_${Math.random().toString(36).slice(2, 10)}`;
     const SR =
@@ -30,7 +38,7 @@ export default function VoicePage() {
     if (!SR) { setSupported(false); return; }
 
     const rec = new SR();
-    rec.continuous = false;
+    rec.continuous = true;
     rec.interimResults = true;
     rec.lang = "en-US";
     recognitionRef.current = rec;
@@ -121,7 +129,11 @@ export default function VoicePage() {
     void drainQueue();
   }, [fetchSpeech, drainQueue]);
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, opts: { speculative?: boolean } = {}) => {
+    inflight.current?.abort();
+    const controller = new AbortController();
+    inflight.current = controller;
+
     setTurns((t) => [...t, { who: "you", text }]);
     setThinking(true);
     window.speechSynthesis?.cancel();
@@ -138,7 +150,8 @@ export default function VoicePage() {
       const res = await fetch("/api/voice/stream", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: sessionIdRef.current, text }),
+        body: JSON.stringify({ sessionId: sessionIdRef.current, text, speculative: opts.speculative }),
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) {
         const message = await res.text();
@@ -211,20 +224,30 @@ export default function VoicePage() {
         }
       }
     } catch (err) {
-      setTurns((t) => [...t, { who: "system", text: String(err) }]);
+      // An aborted speculative turn is the normal case, not an error.
+      if ((err as Error)?.name !== "AbortError") {
+        setTurns((t) => [...t, { who: "system", text: String(err) }]);
+      }
     } finally {
+      if (inflight.current === controller) inflight.current = null;
       setThinking(false);
     }
   }, [enqueueSpeech]);
 
-  const toggleMic = useCallback(() => {
+  /** Stop whatever the agent is saying — the caller has started talking. */
+  const stopSpeaking = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    if (audioEl.current) { audioEl.current.pause(); audioEl.current.currentTime = 0; }
+    speakQueue.current = [];
+    speaking.current = false;
+  }, []);
+
+  const normalise = (t: string) => t.trim().toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ");
+
+  const startListening = useCallback(() => {
     const rec = recognitionRef.current;
     if (!rec) return;
-
-    if (listening) { rec.stop(); setListening(false); return; }
-
-    window.speechSynthesis?.cancel();
-    setInterim("");
+    wantListening.current = true;
 
     rec.onresult = (e: any) => {
       let finalText = "";
@@ -234,18 +257,78 @@ export default function VoicePage() {
         if (e.results[i].isFinal) finalText += chunk;
         else interimText += chunk;
       }
-      setInterim(interimText);
-      if (finalText.trim()) { setInterim(""); void send(finalText.trim()); }
-    };
-    rec.onerror = (e: any) => {
-      setTurns((t) => [...t, { who: "system", text: `mic error: ${e.error}` }]);
-      setListening(false);
-    };
-    rec.onend = () => setListening(false);
 
-    rec.start();
-    setListening(true);
-  }, [listening, send]);
+      // Barge-in: the moment the caller speaks, the agent stops.
+      if ((interimText || finalText).trim()) stopSpeaking();
+
+      setInterim(interimText);
+
+      if (finalText.trim()) {
+        if (speculationTimer.current) clearTimeout(speculationTimer.current);
+        setInterim("");
+        const text = finalText.trim();
+
+        // If a speculative turn is already running for exactly this utterance,
+        // let it finish rather than starting again.
+        if (speculatedFor.current && normalise(speculatedFor.current) === normalise(text)) {
+          speculatedFor.current = null;
+          return;
+        }
+        // Otherwise the guess was wrong (or there was none): drop it and run
+        // the real thing.
+        inflight.current?.abort();
+        speculatedFor.current = null;
+        void send(text);
+        return;
+      }
+
+      /**
+       * Speculative start.
+       *
+       * Chrome waits roughly a second of silence before marking a result
+       * final. Waiting for that is a second of dead air on every turn, so
+       * once the interim transcript has stopped changing for 320ms and looks
+       * like a complete thought, the turn starts on the guess. If the final
+       * transcript turns out different, the request is aborted and re-sent —
+       * the cost of a wrong guess is wasted local compute, not a wrong reply.
+       */
+      if (speculationTimer.current) clearTimeout(speculationTimer.current);
+      const candidate = interimText.trim();
+      if (candidate.split(/\s+/).length >= 4 && !speculatedFor.current) {
+        speculationTimer.current = setTimeout(() => {
+          speculatedFor.current = candidate;
+          void send(candidate, { speculative: true });
+        }, 320);
+      }
+    };
+
+    rec.onerror = (e: any) => {
+      if (e.error === "no-speech" || e.error === "aborted") return; // normal in continuous mode
+      setTurns((t) => [...t, { who: "system", text: `mic error: ${e.error}` }]);
+    };
+
+    // Chrome ends the session periodically even with continuous = true.
+    rec.onend = () => {
+      if (!wantListening.current) { setListening(false); return; }
+      try { rec.start(); } catch { /* already starting */ }
+    };
+
+    try { rec.start(); setListening(true); } catch { /* already running */ }
+  }, [send, stopSpeaking]);
+
+  const stopListening = useCallback(() => {
+    wantListening.current = false;
+    if (speculationTimer.current) clearTimeout(speculationTimer.current);
+    recognitionRef.current?.stop();
+    setListening(false);
+  }, []);
+
+  const toggleMic = useCallback(() => {
+    if (listening) stopListening();
+    else startListening();
+  }, [listening, startListening, stopListening]);
+
+  useEffect(() => () => { wantListening.current = false; recognitionRef.current?.stop(); }, []);
 
   return (
     <main style={{ maxWidth: 780, margin: "0 auto", padding: "40px 24px 120px" }}>
@@ -288,7 +371,8 @@ export default function VoicePage() {
       }}>
         {turns.length === 0 && (
           <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
-            Hit the mic and try: <em>“Hi, my AC is blowing warm air and the house is 84 degrees.
+            Press the mic once — it keeps listening, so just talk the way you would on a
+            call. Try: <em>“Hi, my AC is blowing warm air and the house is 84 degrees.
             Can someone come out tomorrow?”</em>
           </p>
         )}
@@ -301,6 +385,15 @@ export default function VoicePage() {
           </div>
         )}
         {thinking && <div style={{ color: "var(--muted)", fontSize: 14 }}>agent is thinking…</div>}
+        {listening && !thinking && !interim && (
+          <div style={{ color: "var(--accent)", fontSize: 13, display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: "50%", background: "var(--accent)",
+              animation: "pulse 1.4s ease-in-out infinite",
+            }} />
+            listening — speak any time, you can interrupt
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 12, marginTop: 16, alignItems: "center" }}>
@@ -315,6 +408,7 @@ export default function VoicePage() {
             opacity: !supported || thinking ? 0.4 : 1,
           }}
           aria-label={listening ? "Stop listening" : "Start listening"}
+          title={listening ? "Stop listening" : "Start continuous listening"}
         >
           {listening ? "■" : "🎙"}
         </button>

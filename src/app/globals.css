@@ -24,3 +24,8 @@ html, body {
 }
 
 button { font: inherit; cursor: pointer; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
