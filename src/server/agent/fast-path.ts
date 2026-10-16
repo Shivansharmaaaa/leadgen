@@ -99,7 +99,7 @@ const PREFIX_RULES: PrefixRule[] = [
   },
   {
     intent: "noise_or_smell",
-    test: /\b(?:strange|weird|odd|loud|banging|rattling|grinding|squealing) (?:noise|sound)\b|\b(?:smell|smells|burning|odour|odor)\b/i,
+    test: /\b(?:noise|noisy|sound|banging|rattling|grinding|squealing|humming|buzzing|vibrat\w*)\b|\b(?:smell|smells|smelling|burning|odour|odor)\b/i,
     openers: [
       "Okay, worth looking at properly.",
       "Right, let's get a technician on that.",
@@ -127,6 +127,71 @@ const PREFIX_RULES: PrefixRule[] = [
     openers: [
       "Happy to help with that.",
       "Sure, let me explain how that works.",
+    ],
+  },
+  {
+    intent: "advice",
+    test: /\b(?:what|which) (?:brand|make|model|system|unit|size|type)\b|\b(?:recommend|suggest|advise|best) (?:brand|make|system|unit|option|one)\b|\bwhat (?:would you|do you) (?:recommend|suggest)\b/i,
+    openers: [
+      "Good question.",
+      "Happy to talk that through.",
+    ],
+  },
+  {
+    intent: "replacement",
+    test: /\b(?:replace|replacing|new (?:system|unit|ac|furnace|boiler)|upgrade|install(?:ation)?|how old)\b/i,
+    openers: [
+      "Sure, let's look at that.",
+      "Okay, happy to go through that.",
+    ],
+  },
+  {
+    intent: "maintenance",
+    test: /\b(?:service|servicing|maintenance|tune[- ]?up|check[- ]?up|annual|filter|clean)\b/i,
+    openers: [
+      "Of course.",
+      "Sure, we can sort that.",
+    ],
+  },
+  {
+    intent: "existing_job",
+    test: /\b(?:you (?:came|were) (?:out|here)|last (?:time|week|month|year)|previous(?:ly)?|already (?:booked|had)|follow(?:ing)? up|my appointment)\b/i,
+    openers: [
+      "Let me pull that up.",
+      "Okay, let me check on that.",
+    ],
+  },
+  {
+    intent: "efficiency",
+    test: /\b(?:bill|bills|energy|efficien\w*|running cost|electricity|expensive to run|using (?:a lot|more))\b/i,
+    openers: [
+      "That's worth looking at.",
+      "Okay, let's work out what's going on.",
+    ],
+  },
+  {
+    intent: "thermostat",
+    test: /\b(?:thermostat|temperature (?:setting|control)|smart (?:thermostat|control)|nest|ecobee)\b/i,
+    openers: [
+      "Sure.",
+      "Okay, let's check that.",
+    ],
+  },
+  {
+    intent: "area_check",
+    test: /\b(?:do you (?:cover|service|come (?:to|out to))|are you in|service area|how far|based in|located)\b/i,
+    openers: [
+      "Let me check that for you.",
+      "Sure, let me see.",
+    ],
+  },
+  {
+    intent: "general_question",
+    test: /^(?:can|could|do|does|is|are|would|should|will|how|what|when|where|why|who)\b/i,
+    openers: [
+      "Sure.",
+      "Of course.",
+      "Let me help with that.",
     ],
   },
 ];
