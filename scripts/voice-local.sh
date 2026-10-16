@@ -82,6 +82,9 @@ step "Voice (Kokoro TTS)"
 if curl -sf http://127.0.0.1:8787/health >/dev/null 2>&1; then
   ok "Kokoro already running"
 elif [ -x tts/.venv/bin/python ]; then
+  if ! tts/.venv/bin/python -c "import kokoro" >/dev/null 2>&1; then
+    printf "  \033[33m!\033[0m Kokoro venv is broken — repair with: uv pip install --python tts/.venv/bin/python -r tts/requirements.txt\n"
+  fi
   nohup bash tts/run.sh >/dev/null 2>&1 &
   if wait_for http://127.0.0.1:8787/health 60; then
     ok "Kokoro started on the GPU (log: /tmp/tts.log)"

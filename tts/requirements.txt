@@ -1,0 +1,11 @@
+# Kokoro TTS service.
+#
+# These lower bounds are not cosmetic. Installing moshi-mlx into this venv
+# pinned huggingface_hub down to 0.28 and safetensors to 0.5.3, which broke
+# transformers and took the voice service down mid-call — the page fell back
+# to the browser voice and the supervisor restart-looped. Moshi now lives in
+# moshi/.venv for that reason; keep the two apart.
+kokoro>=0.9.4
+soundfile
+huggingface_hub>=1.0
+safetensors>=0.8.0
