@@ -12,7 +12,7 @@ import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 import { qualifyFromTranscript } from "./post-turn";
 import { screenScope, overBudget, MAX_AI_TURNS, readAgreement } from "@/server/core/scope";
 import { resolveFastPath, cleanContinuation } from "./fast-path";
-import { routeTurn } from "./router";
+import { routeTurn, FAULT } from "./router";
 
 /**
  * Low-latency agent turn for spoken channels.
@@ -210,6 +210,9 @@ export async function* runVoiceTurn(opts: {
   const schedulingInPlay =
     offeredSlot ||
     ordered.slice(-4).some((m) => SCHEDULING.test(m.body)) ||
+    // A described fault is a job: "no heat and a baby in the house" needs a
+    // time today, and without the tool the model can only promise vaguely.
+    ordered.slice(-4).some((m) => m.direction === "inbound" && FAULT.test(m.body)) ||
     // The agent itself offered a visit, e.g. the product answer above.
     ordered.slice(-2).some((m) => m.direction === "outbound" && /\bset up (?:that|a) visit|book (?:you|a|that)\b/i.test(m.body));
   const activeTools = toolsFor({

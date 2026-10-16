@@ -34,6 +34,9 @@ export type Route = {
   scope?: ScopeVerdict;
 };
 
+/** A described fault is the start of a job. */
+export const FAULT = /\b(not (?:working|cooling|heating)|broken|leak|smell|noise|no heat|blowing warm|stopped working)\b/i;
+
 /** Turns that plainly need a tool, a price, or a commitment. */
 const TRANSACTIONAL = [
   /\b(book|schedule|appointment|come out|send someone|availability|available|slot|when can)\b/i,
@@ -41,8 +44,7 @@ const TRANSACTIONAL = [
   /\b(cancel|reschedul|confirm|change (?:my|the) (?:time|appointment|booking))\b/i,
   /\b(warranty|guarantee|policy|insurance|contract)\b/i,
   /\b(my (?:name|number) is|you can reach me|call me on|phone number)\b/i,
-  // A described fault is the start of a job, so it belongs on the full path.
-  /\b(not (?:working|cooling|heating)|broken|leak|smell|noise|no heat|blowing warm|stopped working)\b/i,
+  FAULT,
 ];
 
 /** Words that only come up when someone is talking about their system. */
