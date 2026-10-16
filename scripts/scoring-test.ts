@@ -62,6 +62,7 @@ check("…and not yet, 30 minutes in", !codes({ ...esc, escalatedAt: at(30) }).i
 
 check("emergency left unbooked", codes(base({ leadUrgency: "emergency", messages: [cust("no heat, baby at home", 10)] })).includes("emergency_not_booked"));
 check("…not when it was escalated", !codes(base({ leadUrgency: "emergency", escalatedAt: at(5) })).includes("emergency_not_booked"));
+check("…nor when the on-call tech was told", !codes(base({ leadUrgency: "emergency", alerted: true })).includes("emergency_not_booked"));
 
 const quiet = base({ messages: [cust("how soon can you come?", 3000), ai("We have Tuesday 2pm — want it?", 2999)], toolsCalled: ["check_availability"] });
 check("went quiet a day ago, no follow-up", codes(quiet).includes("went_quiet_no_follow_up"));

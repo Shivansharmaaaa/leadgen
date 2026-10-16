@@ -421,9 +421,21 @@ async function qualifyLead(ctx: AgentContext, input: Record<string, unknown>): P
     contact: await contactData(ctx.contactId),
   });
 
+  // An emergency gets a person, not just a slot tomorrow morning: whoever is
+  // on call hears about it now, at any hour, even though the AI keeps the
+  // conversation (this is not a handover).
+  const newlyEmergency = values.urgency === "emergency" && existing?.urgency !== "emergency";
+  const alertIfEmergency = () => newlyEmergency
+    ? alertStaff({
+        tenantId: ctx.tenant.id, conversationId: ctx.conversationId,
+        reason: `emergency job: ${values.service}${values.intent ? ` (${values.intent})` : ""}`, urgency: "now",
+      }).catch(() => undefined)
+    : undefined;
+
   if (existing) {
     await db.update(leads).set(values).where(eq(leads.id, existing.id));
     await publish(ctx.tenant.id, "lead.qualified", await leadData(existing.id));
+    await alertIfEmergency();
     return { ok: true, lead_id: existing.id, updated: true };
   }
 
@@ -443,6 +455,7 @@ async function qualifyLead(ctx: AgentContext, input: Record<string, unknown>): P
     payload: { leadId: lead.id, score: values.score, urgency: values.urgency, service: values.service },
   });
   await publish(ctx.tenant.id, "lead.created", { ...(await leadData(lead.id)), source: conversation?.channel ?? null });
+  await alertIfEmergency();
 
   return { ok: true, lead_id: lead.id, created: true };
 }

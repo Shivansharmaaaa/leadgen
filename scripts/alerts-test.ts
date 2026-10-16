@@ -4,6 +4,7 @@ import { db, tenants, locations, staff, events, jobs, messages, conversations, c
 import { handleInbound } from "@/server/core/ingest";
 import { screenInbound } from "@/server/core/guardrails";
 import { alertStaff, alertText, isOpen, nextOpening, pickRecipients } from "@/server/features/staff-alerts";
+import { executeTool } from "@/server/agent/tools";
 import { ScriptedProvider } from "@/server/agent/providers";
 
 /**
@@ -122,6 +123,23 @@ async function main() {
     const nightGas = await inbound(5, "there's a gas smell coming from the furnace", "+16175550194");
     const ngAlert = (await alertsFor(nightGas.conversationId))[0]?.payload as { emergency?: boolean; recipients?: unknown[] };
     check("an emergency after hours still wakes the on-call tech", ngAlert?.emergency === true && ngAlert.recipients?.length === 1);
+
+    console.log("\nAn emergency job reaches the on-call tech without a handover");
+    await db.update(locations).set({ hours: CLOSED_TODAY }).where(eq(locations.id, location.id));
+    const noHeat = await inbound(7, "No heat at all and there's a baby in the house", "+16175550196");
+    const ctx = { tenant, contactId: noHeat.contactId, conversationId: noHeat.conversationId, location: { ...location, hours: CLOSED_TODAY } };
+    await executeTool(ctx, "qualify_lead", { service: "Furnace repair", intent: "no heat, infant at home", urgency: "emergency", score: 95 });
+    const ems = (await alertsFor(noHeat.conversationId)).map((e) => e.payload as { emergency?: boolean; recipients?: { staffId: string }[] });
+    check("triaged as an emergency → on-call alerted, after hours", ems.length === 1 && ems[0].emergency === true && ems[0].recipients?.[0]?.staffId === sam?.id);
+    const stillAi = await db.query.conversations.findFirst({ where: eq(conversations.id, noHeat.conversationId) });
+    check("…and the AI keeps the conversation (not a handover)", stillAi?.aiPaused === false);
+    await executeTool(ctx, "qualify_lead", { service: "Furnace repair", intent: "no heat", urgency: "emergency", score: 96 });
+    check("re-qualifying the same emergency doesn't alert again", (await alertsFor(noHeat.conversationId)).length === 1);
+    const routine = await inbound(8, "Can I get a tune-up sometime next month?", "+16175550197");
+    await executeTool({ ...ctx, contactId: routine.contactId, conversationId: routine.conversationId }, "qualify_lead",
+      { service: "Tune-up", intent: "annual service", urgency: "this_month", score: 40 });
+    check("a routine lead alerts nobody", (await alertsFor(routine.conversationId)).length === 0);
+    await db.update(locations).set({ hours: ALL_DAY }).where(eq(locations.id, location.id));
 
     console.log("\nReschedule requests reach a person");
     const [c] = await db.insert(contacts).values({ tenantId: tenant.id, displayName: "Leah", primaryPhone: "+16175550195" }).returning();

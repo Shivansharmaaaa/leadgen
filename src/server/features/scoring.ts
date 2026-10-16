@@ -37,6 +37,8 @@ export type Transcript = {
   toolsCalled: string[];
   booked: boolean;
   escalatedAt: Date | null;
+  /** A person was told (a staff alert reached someone). */
+  alerted?: boolean;
   optedOut: boolean;
   leadUrgency: string | null;
   hasLead: boolean;
@@ -118,7 +120,7 @@ export function scoreTranscript(t: Transcript): { outcome: Outcome; flags: Flag[
     }
   }
 
-  if (t.leadUrgency === "emergency" && !t.booked && !t.escalatedAt) {
+  if (t.leadUrgency === "emergency" && !t.booked && !t.escalatedAt && !t.alerted) {
     flags.push({ code: "emergency_not_booked", severity: "high",
       detail: "Triaged as an emergency, but nothing was booked and nobody was alerted." });
   }
@@ -154,7 +156,7 @@ export async function scoreConversation(conversationId: string) {
       where: and(eq(appointments.contactId, convo.contactId), gte(appointments.createdAt, convo.createdAt)),
     }),
     db.query.events.findMany({
-      where: and(eq(events.conversationId, convo.id), inArray(events.type, ["escalated_to_human", "opt_out"])),
+      where: and(eq(events.conversationId, convo.id), inArray(events.type, ["escalated_to_human", "opt_out", "staff_alert"])),
     }),
   ]);
   const escalation = evs.find((e) => e.type === "escalated_to_human");
@@ -169,6 +171,8 @@ export async function scoreConversation(conversationId: string) {
       toolsCalled: runs.flatMap((r) => r.toolCalls.filter((c) => !c.blocked).map((c) => c.name)),
       booked: appts.some((a) => a.status !== "cancelled"),
       escalatedAt: escalation?.createdAt ?? null,
+      alerted: evs.some((e) => e.type === "staff_alert" &&
+        ((e.payload.recipients as { ok?: boolean }[] | undefined) ?? []).some((r) => r.ok)),
       optedOut: evs.some((e) => e.type === "opt_out") || Boolean(contact?.doNotContact),
       leadUrgency: lead?.urgency ?? null,
       hasLead: Boolean(lead),
