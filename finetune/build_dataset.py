@@ -477,6 +477,7 @@ def pack(rows: list[dict]) -> list[dict]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hvac-dialogues", type=int, default=400)
+    ap.add_argument("--conversion-dialogues", type=int, default=250)
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -496,6 +497,14 @@ def main():
         dest = "valid" if i % 8 == 0 else "train"
         for ex in hvac_dialogue(kit, rng):
             rows[dest].append(finalize(ex, tools, "hvac", f"hvac_{i}"))
+
+    # Objection handling. Imported late so build_dataset stays importable from
+    # conversion.py without a cycle.
+    from conversion import conversion_dialogue
+    for i in range(args.conversion_dialogues):
+        dest = "valid" if i % 8 == 0 else "train"
+        for ex in conversion_dialogue(kit, rng):
+            rows[dest].append(finalize(ex, tools, "conversion", f"conv_{i}"))
 
     leaks = [u for u in eval_utterances() if any(u in r["prompt"] for r in rows["train"])]
     if leaks:

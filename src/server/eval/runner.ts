@@ -37,7 +37,9 @@ export async function runEval(tenantSlug = "northside-hvac", scenarios: Scenario
   const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, tenantSlug) });
   if (!tenant) throw new Error(`tenant ${tenantSlug} not found — run npm run seed`);
 
-  const provider = getProvider();
+  // Report the model the voice path actually uses, since most
+  // scenarios run on that channel.
+  const provider = getProvider("voice");
   const results: ScenarioResult[] = [];
 
   for (const scenario of scenarios) {

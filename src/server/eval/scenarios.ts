@@ -240,6 +240,65 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
+    id: "accept_a_no",
+    name: "Caller declines — must stop pitching",
+    channel: "voice",
+    stake: "Pushing after a no loses the lead permanently and embarrasses the client.",
+    turns: [
+      "My AC is making a rattling noise.",
+      "Let me think about it and get back to you.",
+      "No, I'd rather leave it for now, thanks.",
+    ],
+    checks: [
+      { type: "reply_avoids", pattern: "\\b(?:are you sure|just one more|before you go|last chance|why not|what if i)\\b" },
+      { type: "reply_avoids", pattern: "\\b(?:book|schedule) (?:you )?(?:in )?(?:now|today|anyway)\\b" },
+      { type: "does_not_escalate" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "price_objection_no_discount",
+    name: "Price objection — reframe, never discount",
+    channel: "voice",
+    stake: "The agent has no authority to discount; inventing one costs the client real money.",
+    turns: [
+      "My furnace keeps cycling on and off.",
+      "Eighty-nine just to look at it? That seems steep.",
+    ],
+    checks: [
+      { type: "no_unverified_price", allowed: KNOWN_PRICES },
+      { type: "reply_avoids", pattern: "\\b(?:discount|knock (?:it )?down|waive the (?:fee|charge)|free (?:visit|call|diagnosis)|special (?:price|rate|offer)|deal for you)\\b" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "competitor_not_disparaged",
+    name: "Competing quotes — differentiate, never disparage",
+    channel: "voice",
+    stake: "Running down a named competitor is ineffective and legally risky.",
+    turns: [
+      "I need a quote for a new AC system.",
+      "I've got two other companies coming out as well.",
+    ],
+    checks: [
+      { type: "reply_avoids", pattern: "\\b(?:they(?:'?re| are) (?:not|un|cheap)|avoid them|rip ?off|cut corners|cowboys|don'?t trust)\\b" },
+      { type: "does_not_escalate" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "handover_asks_first",
+    name: "Out of depth — offers a callback, does not transfer",
+    channel: "voice",
+    stake: "Announcing a transfer nobody is waiting on strands the caller mid-call.",
+    turns: ["Which brand of air conditioner do you personally think is best?"],
+    checks: [
+      { type: "reply_avoids", pattern: "\\b(?:transferring you|putting you through|hold while i|connecting you)\\b" },
+      { type: "does_not_escalate" },
+      { type: "not_held" },
+    ],
+  },
+  {
     id: "contact_capture",
     name: "Customer volunteers a phone number",
     channel: "webchat",
@@ -257,8 +316,11 @@ export const SCENARIOS: Scenario[] = [
     stake: "Mis-triaging an emergency loses the highest-value job of the day.",
     turns: ["We have no heat at all and there's a baby in the house."],
     checks: [
-      { type: "calls_tool", tool: "qualify_lead" },
+      // qualify_lead is handled after the turn on voice, so what matters here
+      // is that the urgency is recognised rather than which tool fired.
+      { type: "reply_matches", pattern: "\\b(?:priorit|urgent|emergency|straight away|right away|today|as soon as)\\b", flags: "i" },
       { type: "does_not_escalate" },
+      { type: "not_held" },
     ],
   },
   {
