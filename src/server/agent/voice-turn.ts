@@ -332,6 +332,45 @@ export async function* runVoiceTurn(opts: {
     return;
   }
 
+  /**
+   * Silence is the worst possible outcome on a phone call.
+   *
+   * A turn can end with no text at all: the model emits only a tool call, or
+   * the only call it made was dropped as unoffered. The caller then hears
+   * nothing and assumes the line is dead — which is exactly what happened to
+   * "hello can you talk to me", where the model called escalate_to_human and
+   * said nothing.
+   *
+   * So: if an escalation fired, say the handoff line. Otherwise retry once
+   * with no tools at all, which forces prose. Only if that also comes back
+   * empty do we fall back to a fixed line.
+   */
+  if (!fullText.trim()) {
+    const escalatedThisTurn = toolRecords.some((t) => t.name === "escalate_to_human");
+
+    if (escalatedThisTurn) {
+      fullText = "Let me get a colleague to help you with that — someone will call you right back.";
+    } else {
+      try {
+        const retry = await provider.complete({ system, history: llmHistory, tools: [] });
+        fullText = retry.text.trim();
+        totalIn += retry.usage.inputTokens;
+        totalOut += retry.usage.outputTokens;
+      } catch {
+        /* fall through to the fixed line */
+      }
+    }
+
+    if (!fullText.trim()) {
+      fullText = "Sorry, could you say that again?";
+    }
+
+    for (const sentence of fullText.split(/(?<=[.!?])\s+/).filter(Boolean)) {
+      yield { type: "sentence", text: sentence, msSinceStart: Date.now() - started };
+    }
+    firstWordMs ??= Date.now() - started;
+  }
+
   // Gate 2. Already spoken, so this records the violation for review rather
   // than blocking — the tradeoff streaming forces, and the reason the price
   // guard also lives in the prompt as a hard rule.

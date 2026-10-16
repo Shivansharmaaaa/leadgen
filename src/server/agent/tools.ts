@@ -161,9 +161,12 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   {
     name: "escalate_to_human",
     description:
-      "Hand this conversation to a human and stop replying. Use for anything legal, " +
-      "medical, a refund demand, a safety issue, repeated frustration, or an explicit " +
-      "request for a person.",
+      "Hand this conversation to a human and stop replying. Use ONLY for: a legal " +
+      "or insurance matter, a medical or safety issue, a refund or billing dispute, " +
+      "repeated frustration after you have already tried to help, or an explicit " +
+      "request to speak to a named person or 'a real person'. " +
+      "Do NOT use it for small talk, greetings, or someone simply asking whether " +
+      "you can talk, hear, or help them — answer those yourself.",
     input_schema: {
       type: "object",
       properties: {
