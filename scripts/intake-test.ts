@@ -133,6 +133,15 @@ async function main() {
     const again = await db.query.contacts.findFirst({ where: eq(contacts.id, a.contactId!) });
     check("earlier valid consent survives a form without one", again?.smsConsent === true);
 
+    console.log("\nTimestamps and existing threads");
+    const future = await intakeLead(tenant.id, { source: "website", externalId: "future-1", phone: "6175550160",
+      submittedAt: new Date(Date.now() + 3600_000).toISOString() });
+    const fIn = await db.query.messages.findFirst({ where: and(eq(messages.conversationId, future.conversationId!), eq(messages.direction, "inbound")) });
+    check("a submittedAt in the future is clamped to now", Boolean(fIn) && fIn!.createdAt.getTime() <= Date.now());
+    ScriptedProvider.enqueue("");
+    const repeat = await intakeLead(tenant.id, { source: "website", externalId: "future-2", phone: "6175550160", message: "Also my thermostat" });
+    check("an old reply in the same thread is not reported as this lead's reply", repeat.firstResponse === "not_sent", `${repeat.firstResponse}`);
+
     console.log("\nEmail-only lead");
     const c = await intakeLead(tenant.id, { source: "facebook_lead_ad", externalId: "fb-9", email: "Nora@Example.com", service: "Heat pump quote" });
     // No SMTP here: an email reply that passes the gate fails at the provider.

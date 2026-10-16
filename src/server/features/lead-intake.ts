@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, contacts, events, leads, messages, tenants } from "@/server/db";
 import { handleInbound } from "@/server/core/ingest";
@@ -161,7 +161,10 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
     }
   }
 
-  const submittedAt = input.submittedAt ? new Date(input.submittedAt) : new Date();
+  // A source's clock running fast must not put the lead in the future (the
+  // SLA would come out negative).
+  const now = new Date();
+  const submittedAt = input.submittedAt && new Date(input.submittedAt) < now ? new Date(input.submittedAt) : now;
   const contact = await resolveContact(tenantId, {
     channel: phone ? "sms" : "email",
     externalId: (phone ?? email)!,
@@ -201,6 +204,7 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
     : `(Requested ${input.service ?? "a callback"} through the ${sourceLabel(input.source)} form.)`;
   const settings = tenant.settings ?? {};
   const firstName = input.name?.split(/\s+/)[0];
+  const replyAfter = new Date();
   const ingested = await handleInbound({
     tenantId,
     channel,
@@ -234,9 +238,11 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
         sourceChannel: channel, source: input.source, service: input.service ?? null, summary,
       }).returning())[0].id;
 
-  // What actually happened to the reply, read from the message it produced.
+  // What actually happened to the reply, read from the message it produced
+  // now. An existing thread has older replies, which must not count.
   const reply = ingested.duplicate ? null : await db.query.messages.findFirst({
-    where: and(eq(messages.conversationId, ingested.conversationId), eq(messages.direction, "outbound")),
+    where: and(eq(messages.conversationId, ingested.conversationId), eq(messages.direction, "outbound"),
+      gte(messages.createdAt, replyAfter)),
     orderBy: desc(messages.createdAt),
   });
   const firstResponse: IntakeResult["firstResponse"] =
