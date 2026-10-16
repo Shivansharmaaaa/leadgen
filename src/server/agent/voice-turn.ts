@@ -4,7 +4,7 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound, disclosureReply } from "@/server/core/guardrails";
+import { screenInbound, screenOutbound, disclosureReply, handoffReply, safetyReply } from "@/server/core/guardrails";
 import { recall } from "@/server/memory/store";
 import { buildSystemPrompt } from "./prompt";
 import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
@@ -117,6 +117,8 @@ export type VoiceEvent =
   | { type: "tool"; name: string; ok: boolean; ms: number }
   | { type: "escalated"; reason: string }
   | { type: "held"; reason: string }
+  /** A speculative turn the server will not act on; the client runs the real one. */
+  | { type: "declined"; reason: string }
   | { type: "done"; fullText: string; latencyMs: number; firstWordMs: number | null; provider: string; model: string }
   | { type: "error"; message: string };
 
@@ -226,13 +228,42 @@ export async function* runVoiceTurn(opts: {
   if (latestInbound) {
     const verdict = screenInbound(latestInbound.body, tenant.settings ?? {});
     if (verdict.escalate) {
+      // Escalating texts staff now, so it is never done on a guess: the
+      // client sends the confirmed turn, which lands here for real.
+      if (opts.speculative) {
+        if (opts.inboundMessageId) {
+          await db.delete(messagesTable).where(eq(messagesTable.id, opts.inboundMessageId));
+        }
+        yield { type: "declined", reason: "an escalation is never acted on from a guess" };
+        return;
+      }
+      // Spoken before the staff alert (one Twilio call): on a gas smell the
+      // caller needs to hear "leave the house" first, and nobody should be
+      // left in silence with the AI paused.
+      const businessName = tenant.settings?.businessName ?? tenant.name;
+      const text = verdict.safety ? safetyReply(businessName) : handoffReply(businessName);
+      for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+        yield { type: "sentence", text: sentence, msSinceStart: Date.now() - started };
+      }
+      const firstWordMs = Date.now() - started;
       await executeTool(ctx, "escalate_to_human", {
         reason: `${verdict.reason}: ${verdict.trigger}`, urgency: "now",
       });
+      await db.insert(messagesTable).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        direction: "outbound", channel: "voice", authorType: "ai", body: text, status: "sent",
+      });
+      await db.insert(agentRuns).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        inboundMessageId: opts.inboundMessageId ?? null,
+        model: verdict.safety ? "guardrail:safety" : "guardrail:handoff", toolCalls: [],
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
+        latencyMs: Date.now() - started, costUsd: "0", outcome: "escalated",
+      });
       yield { type: "escalated", reason: `${verdict.reason}: ${verdict.trigger}` };
       yield {
-        type: "done", fullText: "", latencyMs: Date.now() - started, firstWordMs: null,
-        provider: "guardrail", model: "n/a",
+        type: "done", fullText: text, latencyMs: Date.now() - started, firstWordMs,
+        provider: "guardrail", model: verdict.safety ? "safety" : "handoff",
       };
       return;
     }
