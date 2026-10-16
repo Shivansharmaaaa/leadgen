@@ -10,6 +10,7 @@ const FILLERS = [
 ];
 
 const SIGNAL_COLOUR: Record<string, string> = {
+  "mic": "var(--muted)",
   "parakeet": "var(--accent)",
   "low confidence": "var(--danger)",
   "backchannel": "var(--accent)",
@@ -96,7 +97,9 @@ export default function VoicePage() {
    * out of the ring by absolute position however many times it has wrapped.
    */
   const RING = 16000 * 60;
-  const ring = useRef(new Float32Array(RING));
+  // Lazily allocated: `useRef(new Float32Array(...))` would build and throw
+  // away a 3.8 MB buffer on every render.
+  const ring = useRef<Float32Array | null>(null);
   const written = useRef(0);
   const utteranceStart = useRef<number | null>(null);
   const capture = useRef<{ ctx: AudioContext; stream: MediaStream } | null>(null);
@@ -418,14 +421,22 @@ export default function VoicePage() {
   const startCapture = useCallback(async () => {
     if (capture.current) return;
     try {
+      /**
+       * Raw capture, deliberately with no processing. Asking for echo
+       * cancellation on macOS can switch the input into Apple's voice-
+       * processing mode, which starved Chrome's own recogniser of audio: the
+       * mic appeared on, no events fired, no error was raised, and the agent
+       * simply never heard anything. Parakeet copes with unprocessed audio.
+       */
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
       const ac = new AudioContext({ sampleRate: 16000 });
       await ac.audioWorklet.addModule("/pcm-capture.js");
       const node = new AudioWorkletNode(ac, "pcm-capture");
       node.port.onmessage = (ev: MessageEvent<Float32Array>) => {
         const frame = ev.data;
+        ring.current ??= new Float32Array(RING);
         const buf = ring.current;
         let pos = written.current % RING;
         for (let i = 0; i < frame.length; i++) {
@@ -436,12 +447,14 @@ export default function VoicePage() {
       };
       ac.createMediaStreamSource(stream).connect(node);
       capture.current = { ctx: ac, stream };
-    } catch {
+      note("mic", "parakeet capture running");
+    } catch (err) {
+      note("mic", `parakeet capture unavailable — ${(err as Error)?.message ?? "error"}; using browser transcript`);
       // No capture means Parakeet is skipped and the browser transcript is
       // used — accuracy degrades, the call does not.
       capture.current = null;
     }
-  }, []);
+  }, [note]);
 
   const stopCapture = useCallback(() => {
     capture.current?.stream.getTracks().forEach((t) => t.stop());
@@ -457,6 +470,7 @@ export default function VoicePage() {
     if (n < 1600) return null; // under 0.1s: nothing worth sending
     const out = new Int16Array(n);
     const buf = ring.current;
+    if (!buf) return null;
     for (let i = 0; i < n; i++) {
       const v = buf[(from + i) % RING];
       out[i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
@@ -655,7 +669,24 @@ export default function VoicePage() {
 
     rec.onerror = (e: any) => {
       if (e.error === "no-speech" || e.error === "aborted") return; // normal in continuous mode
-      setTurns((t) => [...t, { who: "system", text: `mic error: ${e.error}` }]);
+      note("mic", `recogniser error: ${e.error}`);
+
+      /**
+       * Fatal errors must stop the auto-restart. Otherwise onend restarts
+       * the recogniser, it fails again at once, and it spins in a tight loop
+       * without ever telling the caller what is wrong.
+       */
+      const FATAL: Record<string, string> = {
+        "not-allowed": "Microphone permission is blocked. Click the lock icon in the address bar, allow the microphone, then reload.",
+        "service-not-allowed": "Chrome's speech service is not allowed here. Check the site's microphone permission and reload.",
+        "audio-capture": "No microphone could be opened. Check it is connected and not in use by another app, then reload.",
+        "network": "Chrome's speech recogniser could not reach its service. Check your connection.",
+      };
+      if (FATAL[e.error]) {
+        wantListening.current = false;
+        setListening(false);
+        setTurns((t) => [...t, { who: "system", text: FATAL[e.error] }]);
+      }
     };
 
     /**
@@ -678,8 +709,25 @@ export default function VoicePage() {
       }
     };
 
-    void startCapture();
-    try { rec.start(); setListening(true); } catch { /* already running */ }
+    // Visible lifecycle: a recogniser that starts but never receives audio
+    // fails silently otherwise, which is exactly the failure being fixed.
+    rec.onstart = () => note("mic", "recogniser started");
+    rec.onaudiostart = () => {
+      note("mic", "recogniser hearing audio");
+      // Attach the Parakeet capture only once Chrome's recogniser already has
+      // the device, so it is never the one left without audio.
+      void startCapture();
+    };
+    rec.onspeechstart = () => note("mic", "speech detected");
+
+    try {
+      rec.start();
+      setListening(true);
+    } catch (err) {
+      // Previously swallowed, which left the button looking idle with no
+      // explanation.
+      note("mic", `could not start recogniser — ${(err as Error)?.message ?? "error"}`);
+    }
   }, [send, stopSpeaking, note, agentSpeaking, releaseSpeculation, startCapture, cutUtterance, transcribe]);
 
   const stopListening = useCallback(() => {

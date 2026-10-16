@@ -19,3 +19,6 @@ models/moshi/
 moshi/.venv/
 stt/.venv/
 models/parakeet/
+
+# Fine-tuning has its own venv too — torch/peft/accelerate must never land in tts/.venv
+finetune/.venv/
