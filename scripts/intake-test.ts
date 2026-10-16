@@ -61,8 +61,17 @@ async function main() {
       ["Don't call me, text me instead", null], ["stop by tomorrow?", null],
     ];
     for (const [text, want] of cases) {
-      const got = detectConsentKeyword(text)?.kind ?? null;
+      const got = detectConsentKeyword(text, "sms")?.kind ?? null;
       check(`${JSON.stringify(text)} → ${want ?? "not a keyword"}`, got === want, got === want ? "" : `got ${got}`);
+    }
+    // On a call "stop" means stop talking; only an explicit request counts.
+    const voiceCases: [string, string | null][] = [
+      ["Stop.", null], ["End", null], ["Cancel", null], ["START", null],
+      ["Don't call me again", "opt_out"], ["Take me off your list", "opt_out"],
+    ];
+    for (const [text, want] of voiceCases) {
+      const got = detectConsentKeyword(text, "voice")?.kind ?? null;
+      check(`on a call: ${JSON.stringify(text)} → ${want ?? "not a keyword"}`, got === want, got === want ? "" : `got ${got}`);
     }
 
     console.log("\nIntake with valid consent");
@@ -156,6 +165,20 @@ async function main() {
     check("START lifts it", restarted?.doNotContact === false);
     const optEvents = await db.query.events.findMany({ where: and(eq(events.tenantId, tenant.id), eq(events.type, "opt_out")) });
     check("opt-out logged as evidence", optEvents.length === 1);
+
+    console.log("\nOpt-out on a call");
+    const callStop = await handleInbound({
+      tenantId: tenant.id, channel: "voice", externalId: "CA-1-1", externalThreadId: "CA-1",
+      from: { channel: "voice", externalId: "+16175550188" }, body: "Stop.",
+    });
+    check("a bare 'Stop.' on a call goes to the agent", callStop.outcome?.provider === "scripted");
+    const callDnc = await handleInbound({
+      tenantId: tenant.id, channel: "voice", externalId: "CA-1-2", externalThreadId: "CA-1",
+      from: { channel: "voice", externalId: "+16175550188" }, body: "Please don't call me again.",
+    });
+    const caller = await db.query.contacts.findFirst({ where: eq(contacts.id, callDnc.contactId) });
+    check("'don't call me again' on a call is honoured", caller?.doNotContact === true);
+    check("and the caller hears a spoken confirmation", Boolean(callDnc.outcome?.reply?.startsWith("Understood")), callDnc.outcome?.reply ?? "");
 
     console.log("\nInitiated send to a stranger");
     const [convo] = await db.insert(conversations).values({ tenantId: tenant.id, contactId: a.contactId!, channel: "sms" }).returning();

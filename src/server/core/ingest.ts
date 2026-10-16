@@ -125,7 +125,7 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
   // 4c. STOP / START. Honoured before anything else can answer, and the
   //     agent never sees the message: a chatty reply to "STOP" is exactly
   //     what a TCPA plaintiff screenshots.
-  const consentKeyword = detectConsentKeyword(msg.body);
+  const consentKeyword = detectConsentKeyword(msg.body, msg.channel);
   if (consentKeyword) {
     const optingOut = consentKeyword.kind === "opt_out";
     await db.update(contacts).set({ doNotContact: optingOut }).where(eq(contacts.id, contact.id));
@@ -137,15 +137,23 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
       payload: { keyword: consentKeyword.keyword, channel: msg.channel, messageId: stored.id },
     });
     const businessName = tenantRow?.settings?.businessName ?? tenantRow?.name ?? "us";
+    const confirmation = optingOut
+      ? optOutConfirmation(businessName, msg.channel)
+      : optInConfirmation(businessName);
     // One confirmation is allowed, and expected, after a revocation.
     const sent = await deliver({
       tenantId: msg.tenantId,
       conversationId: conversation.id,
       channel: msg.channel,
       to: msg.from,
-      body: optingOut ? optOutConfirmation(businessName) : optInConfirmation(businessName),
+      body: confirmation,
     });
-    return { conversationId: conversation.id, contactId: contact.id, messageId: stored.id, duplicate: false, sent };
+    // Voice speaks outcome.reply, so the confirmation goes there too.
+    const outcome: AgentOutcome = {
+      reply: confirmation, escalated: false, toolCalls: [], costUsd: 0, latencyMs: 0,
+      provider: "rule", model: "opt-out", productionGrade: true,
+    };
+    return { conversationId: conversation.id, contactId: contact.id, messageId: stored.id, duplicate: false, outcome, sent };
   }
 
   // 5. A human has taken this thread — stay out of it.

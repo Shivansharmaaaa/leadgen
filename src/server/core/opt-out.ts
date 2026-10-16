@@ -44,10 +44,17 @@ const MAX_PHRASE_LENGTH = 80;
  */
 const PREFERENCE = /\b(?:instead|rather|prefer|only)\b/i;
 
-export function detectConsentKeyword(body: string): ConsentKeyword | null {
+/**
+ * On a call, a bare "stop" or "end" means stop talking or end the call, and
+ * "cancel" is usually the appointment: only an explicit request ("don't call
+ * me again", "take me off your list") counts there, and START means nothing.
+ */
+export function detectConsentKeyword(body: string, channel?: string): ConsentKeyword | null {
   const bare = body.trim().toLowerCase().replace(/[^a-z ]/g, "").replace(/\s+/g, " ").trim();
-  if (OPT_OUT_WORDS.has(bare)) return { kind: "opt_out", keyword: bare };
-  if (OPT_IN_WORDS.has(bare)) return { kind: "opt_in", keyword: bare };
+  if (channel !== "voice") {
+    if (OPT_OUT_WORDS.has(bare)) return { kind: "opt_out", keyword: bare };
+    if (OPT_IN_WORDS.has(bare)) return { kind: "opt_in", keyword: bare };
+  }
 
   if (body.trim().length <= MAX_PHRASE_LENGTH) {
     const m = body.match(OPT_OUT_PHRASE);
@@ -56,7 +63,10 @@ export function detectConsentKeyword(body: string): ConsentKeyword | null {
   return null;
 }
 
-export function optOutConfirmation(businessName: string): string {
+export function optOutConfirmation(businessName: string, channel?: string): string {
+  if (channel === "voice") {
+    return `Understood. I've taken you off our list, and ${businessName} won't contact you again. Take care.`;
+  }
   return `You're unsubscribed from ${businessName} messages and won't hear from us again. ` +
     `Reply START to resubscribe.`;
 }
