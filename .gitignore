@@ -14,3 +14,7 @@ __pycache__/
 tts/.venv/
 tts/*.wav
 models/moshi/
+
+# Per-service virtualenvs — kept separate so one install cannot break another
+moshi/.venv/
+stt/.venv/

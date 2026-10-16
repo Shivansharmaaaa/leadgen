@@ -111,8 +111,10 @@ const PREFIX_RULES: PrefixRule[] = [
     test: /^(?:yes|yeah|yep|yup|no|nope|ok|okay|sure|right|alright|got it|i see|mm|mhm)\b/i,
     openers: [
       "Okay.",
-      "Right.",
       "Got it.",
+      "Sure.",
+      "Mm-hmm.",
+      "Understood.",
     ],
   },
   {
@@ -129,7 +131,9 @@ const PREFIX_RULES: PrefixRule[] = [
     openers: [
       "Sorry to hear that.",
       "Okay, sorry you're dealing with that.",
-      "Right, let's get that sorted.",
+      "Ah, that's no fun.",
+      "Okay, let's get that sorted.",
+      "Oh no, let's sort that out.",
     ],
   },
   {
@@ -137,15 +141,19 @@ const PREFIX_RULES: PrefixRule[] = [
     test: /\b(?:emergency|urgent|right away|as soon as possible|asap|freezing|no heat at all|flooding|burst)\b/i,
     openers: [
       "Okay, that's one we prioritise.",
-      "Right, let's treat that as urgent.",
+      "Understood, let's treat that as urgent.",
+      "Okay, we'll move quickly on that.",
+      "Got it, that needs sorting today.",
     ],
   },
   {
     intent: "noise_or_smell",
     test: /\b(?:noise|noisy|sound|banging|rattling|grinding|squealing|humming|buzzing|vibrat\w*)\b|\b(?:smell|smells|smelling|burning|odour|odor)\b/i,
     openers: [
-      "Okay, worth looking at properly.",
-      "Right, let's get a technician on that.",
+      "Okay, that's worth looking at properly.",
+      "Hmm, let's get a technician on that.",
+      "Good that you called about it.",
+      "Okay, that's worth checking out.",
     ],
   },
   {
@@ -153,7 +161,9 @@ const PREFIX_RULES: PrefixRule[] = [
     test: /\b(?:leak|leaking|dripping|water (?:coming|pooling)|puddle)\b/i,
     openers: [
       "Okay, a leak we want to catch early.",
-      "Right, let's get that looked at.",
+      "Got it, let's get that looked at.",
+      "Good call ringing about that.",
+      "Okay, let's not leave that one.",
     ],
   },
   {
@@ -248,7 +258,7 @@ export async function resolveFastPath(
   tenantId: string,
   text: string,
   seed = Math.random(),
-  opts: { alreadySpoken?: boolean } = {},
+  opts: { alreadySpoken?: boolean; recent?: string[] } = {},
 ): Promise<FastPath> {
   const t = text.trim();
   if (t.length === 0) return { kind: "none" };
@@ -277,7 +287,17 @@ export async function resolveFastPath(
     // possible signal that nothing is being remembered.
     if (opts.alreadySpoken && ONCE_ONLY.has(rule.intent)) continue;
     if (rule.test.test(t)) {
-      const opener = rule.openers[Math.floor(seed * rule.openers.length) % rule.openers.length];
+      /**
+       * Never reuse an opener this conversation has already heard. Hearing
+       * the same three words at the start of every reply is what makes a
+       * line sound canned even when the rest of the answer is fresh.
+       */
+      const said = (opts.recent ?? []).map((r) => r.toLowerCase());
+      const fresh = rule.openers.filter(
+        (o) => !said.some((r) => r.startsWith(o.toLowerCase().replace(/[.!?]$/, ""))),
+      );
+      const pool = fresh.length > 0 ? fresh : rule.openers;
+      const opener = pool[Math.floor(seed * pool.length) % pool.length];
       return { kind: "prefix", text: opener, intent: rule.intent };
     }
   }

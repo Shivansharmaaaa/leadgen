@@ -4,7 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { classifyInterruption, endpointDelayMs } from "./turn-taking";
 
 /** Kept in step with WARM_PHRASES in tts/server.py so these are pre-rendered. */
-const FILLERS = ["Let me see.", "One second.", "Mm, okay.", "Right."];
+const FILLERS = [
+  "One second.", "Let me check.", "Let me see.", "Bear with me.",
+  "Just a sec.", "Let me just have a look.", "Okay, one moment.", "Hmm, let me check that.",
+];
 
 const SIGNAL_COLOUR: Record<string, string> = {
   "low confidence": "var(--danger)",
@@ -68,6 +71,22 @@ export default function VoicePage() {
   const speculationConfirmed = useRef(false);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFiller = useRef<string | null>(null);
+
+  /**
+   * The turn being spoken, across Chrome's segments.
+   *
+   * Chrome marks a result "final" after its own short pause — often a breath
+   * mid-sentence. Treating that as the end of the turn is what cut callers
+   * off before they had finished. Finals are now only segments: they are
+   * accumulated here, and the turn is committed by our own endpointing once
+   * the caller has actually stopped.
+   */
+  const utterance = useRef("");
+  const liveInterim = useRef("");
+  const lastPending = useRef("");
+  const lastSpeechAt = useRef(0);
+  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     sessionIdRef.current = `browser_${Math.random().toString(36).slice(2, 10)}`;
@@ -214,6 +233,14 @@ export default function VoicePage() {
     });
   }, [ctx, fetchSpeech, fallbackSpeak]);
 
+  /** True while agent audio is playing or scheduled to play. */
+  const agentSpeaking = useCallback(() => {
+    const ac = audioCtx.current;
+    if (window.speechSynthesis?.speaking) return true;
+    if (!ac) return false;
+    return scheduled.current.length > 0 && nextStartAt.current > ac.currentTime;
+  }, []);
+
   /** Stop whatever the agent is saying — the caller has started talking. */
   const stopSpeaking = useCallback(() => {
     window.speechSynthesis?.cancel();
@@ -255,7 +282,9 @@ export default function VoicePage() {
     if (!opts.speculative) {
       fillerTimer.current = setTimeout(() => {
         spokeFiller = true;
-        const f = FILLERS[Math.floor(Math.random() * FILLERS.length)];
+        const choices = FILLERS.filter((x) => x !== lastFiller.current);
+        const f = choices[Math.floor(Math.random() * choices.length)];
+        lastFiller.current = f;
         note("filler", `nothing ready at 700ms — said "${f}"`);
         enqueueSpeech(f);
       }, 700);
@@ -390,6 +419,32 @@ export default function VoicePage() {
     if (!rec) return;
     wantListening.current = true;
 
+    /** Commit what the caller has said as one turn. */
+    const commitTurn = () => {
+      if (commitTimer.current) { clearTimeout(commitTimer.current); commitTimer.current = null; }
+      if (speculationTimer.current) { clearTimeout(speculationTimer.current); speculationTimer.current = null; }
+
+      const text = `${utterance.current} ${liveInterim.current}`.trim();
+      utterance.current = "";
+      liveInterim.current = "";
+      lastPending.current = "";
+      setInterim("");
+      if (!text) return;
+
+      // The speculative run already started on exactly this — release it.
+      if (speculatedFor.current && normalise(speculatedFor.current) === normalise(text)) {
+        speculatedFor.current = null;
+        releaseSpeculation(text);
+        return;
+      }
+      // Guess was wrong, or there was none: drop it and run the real turn.
+      inflight.current?.abort();
+      heldSentences.current = [];
+      speculatedFor.current = null;
+      speculationConfirmed.current = false;
+      void send(text);
+    };
+
     rec.onresult = (e: any) => {
       let finalText = "";
       let interimText = "";
@@ -397,14 +452,12 @@ export default function VoicePage() {
 
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const result = e.results[i];
-
         // Prefer the highest-confidence alternative, not simply the first.
         let best = result[0];
         for (let k = 1; k < result.length; k++) {
           if ((result[k]?.confidence ?? 0) > (best?.confidence ?? 0)) best = result[k];
         }
         const chunk = best?.transcript ?? result[0].transcript;
-
         if (result.isFinal) {
           finalText += chunk;
           const c = best?.confidence ?? 1;
@@ -414,78 +467,77 @@ export default function VoicePage() {
         }
       }
 
-      // Surface a shaky transcript rather than acting on it silently.
       if (finalText.trim() && lowestConfidence < 0.65) {
         note("low confidence", `${(lowestConfidence * 100).toFixed(0)}% — "${finalText.trim().slice(0, 30)}"`);
       }
 
-      // Only a real floor grab stops the agent. "mm-hmm" and "right" mean
-      // carry on, and a single stray word is usually the agent's own audio
-      // leaking back into the microphone.
       const heard = (finalText || interimText).trim();
-      if (heard) {
+
+      /**
+       * Backchannel vs barge-in only applies WHILE the agent is talking.
+       * "mm-hmm" over the agent means carry on; "yes" after the agent has
+       * asked "shall I book Thursday?" is the answer. The old check did not
+       * know the difference and could throw a "yes" away.
+       */
+      if (heard && agentSpeaking()) {
         const action = classifyInterruption(heard);
         if (action === "barge_in") {
           note("barge-in", `"${heard.slice(0, 28)}" — stopped the agent`);
           stopSpeaking();
-        }
-        else if (action === "backchannel" || action === "ignore") {
+        } else {
           if (action === "backchannel") note("backchannel", `"${heard.slice(0, 20)}" — kept going`);
-          // Acknowledgement or noise: do not interrupt, and do not treat it
-          // as a turn of its own.
-          if (!finalText.trim()) { setInterim(interimText); return; }
-          if (classifyInterruption(finalText.trim()) !== "barge_in") {
-            setInterim("");
-            return;
-          }
+          return; // not a turn of its own
         }
       }
 
-      setInterim(interimText);
-
       if (finalText.trim()) {
-        if (speculationTimer.current) clearTimeout(speculationTimer.current);
-        setInterim("");
-        const text = finalText.trim();
+        utterance.current = `${utterance.current} ${finalText.trim()}`.trim();
+      }
+      liveInterim.current = interimText.trim();
 
-        // If a speculative turn is already running for exactly this utterance,
-        // let it finish rather than starting again.
-        if (speculatedFor.current && normalise(speculatedFor.current) === normalise(text)) {
-          speculatedFor.current = null;
-          releaseSpeculation(text);
-          return;
-        }
-        // Otherwise the guess was wrong (or there was none): drop it and run
-        // the real thing.
-        // The guess was wrong: throw it away, including anything it had
-        // ready to say, and run the real utterance.
-        inflight.current?.abort();
-        heldSentences.current = [];
-        speculatedFor.current = null;
-        speculationConfirmed.current = false;
-        void send(text);
+      const pending = `${utterance.current} ${liveInterim.current}`.trim();
+      if (!pending) return;
+
+      // Only a change in WHAT was said counts as speech. Chrome's final event
+      // usually repeats the last interim word for word, and counting that as
+      // fresh speech would double the wait.
+      const now = performance.now();
+      if (pending !== lastPending.current) {
+        lastPending.current = pending;
+        lastSpeechAt.current = now;
+      }
+      const sinceSpeech = now - lastSpeechAt.current;
+
+      setInterim(pending);
+
+      const delay = endpointDelayMs(pending);
+      if (!Number.isFinite(delay)) {
+        // Too little to judge yet — wait longer, but never forever.
+        if (commitTimer.current) clearTimeout(commitTimer.current);
+        commitTimer.current = setTimeout(commitTurn, Math.max(0, 1800 - sinceSpeech));
         return;
       }
 
+      note("endpointing", `waiting ${delay}ms — "${pending.slice(-26)}"`);
+
+      // Commit once the caller has been quiet for the endpoint delay.
+      if (commitTimer.current) clearTimeout(commitTimer.current);
+      commitTimer.current = setTimeout(commitTurn, Math.max(0, delay - sinceSpeech));
+
       /**
-       * Speculative start.
-       *
-       * Chrome waits roughly a second of silence before marking a result
-       * final. Waiting for that is a second of dead air on every turn, so
-       * once the interim transcript has stopped changing for 320ms and looks
-       * like a complete thought, the turn starts on the guess. If the final
-       * transcript turns out different, the request is aborted and re-sent —
-       * the cost of a wrong guess is wasted local compute, not a wrong reply.
+       * Speculative start — silent pre-computation, released only on commit.
+       * Started at roughly half the commit delay on sentences that sound
+       * finished, never on ones trailing off mid-thought.
        */
       if (speculationTimer.current) clearTimeout(speculationTimer.current);
-      const candidate = interimText.trim();
-      const delay = endpointDelayMs(candidate);
-      if (Number.isFinite(delay) && !speculatedFor.current) {
-        note("endpointing", `waiting ${delay}ms — "${candidate.slice(-24)}"`);
+      if (delay <= 900 && normalise(speculatedFor.current ?? "") !== normalise(pending)) {
+        const specAt = Math.max(0, Math.min(delay * 0.5, 450) - sinceSpeech);
         speculationTimer.current = setTimeout(() => {
-          speculatedFor.current = candidate;
-          void send(candidate, { speculative: true });
-        }, delay);
+          const guess = `${utterance.current} ${liveInterim.current}`.trim();
+          if (!guess) return;
+          speculatedFor.current = guess;
+          void send(guess, { speculative: true });
+        }, specAt);
       }
     };
 
@@ -515,11 +567,14 @@ export default function VoicePage() {
     };
 
     try { rec.start(); setListening(true); } catch { /* already running */ }
-  }, [send, stopSpeaking, note]);
+  }, [send, stopSpeaking, note, agentSpeaking, releaseSpeculation]);
 
   const stopListening = useCallback(() => {
     wantListening.current = false;
     if (speculationTimer.current) clearTimeout(speculationTimer.current);
+    if (commitTimer.current) clearTimeout(commitTimer.current);
+    utterance.current = "";
+    liveInterim.current = "";
     recognitionRef.current?.stop();
     setListening(false);
   }, []);

@@ -310,8 +310,13 @@ export async function* runVoiceTurn(opts: {
   let spokenPrefix: string | null = null;
   if (latestInbound) {
     const agentHasSpoken = ordered.some((m) => m.direction === "outbound");
+    const recentReplies = ordered
+      .filter((m) => m.direction === "outbound")
+      .slice(-6)
+      .map((m) => m.body);
     const fast = await resolveFastPath(
-      tenant.id, latestInbound.body, Math.random(), { alreadySpoken: agentHasSpoken });
+      tenant.id, latestInbound.body, Math.random(),
+      { alreadySpoken: agentHasSpoken, recent: recentReplies });
 
     if (fast.kind === "full") {
       await db.insert(messagesTable).values({
