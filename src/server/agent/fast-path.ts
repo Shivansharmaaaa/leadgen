@@ -1,0 +1,209 @@
+import { eq, and } from "drizzle-orm";
+import { db, knowledgeFacts } from "@/server/db";
+
+/**
+ * Canned replies, in two forms.
+ *
+ * 1. FULL ANSWER — a question whose answer is a fixed fact the business has
+ *    already written down. "Do you charge for the call-out?" has exactly one
+ *    correct answer and the model cannot improve on it, so it is served from
+ *    the knowledge facts directly: no generation, no tokens, no risk of the
+ *    number drifting.
+ *
+ * 2. PREFIX — an opener spoken immediately while the model writes the rest.
+ *    This is the bigger latency win: the caller hears a human-sounding
+ *    acknowledgement at ~0ms instead of three seconds of silence, and the
+ *    model's reply arrives behind it. The model is told what was already said
+ *    so it continues rather than repeating it.
+ *
+ * Both are deliberately high-precision. A canned line that misfires is worse
+ * than the latency it saves, so patterns match intent narrowly and anything
+ * uncertain falls through to the model.
+ */
+
+export type FastPath =
+  | { kind: "full"; text: string; factKey: string }
+  | { kind: "prefix"; text: string; intent: string }
+  | { kind: "none" };
+
+/* ── 1. Full answers, built from the tenant's own verified facts ─────────── */
+
+type FaqRule = {
+  /** Must match for the rule to fire. */
+  test: RegExp;
+  /** Fact to answer from, as `category/key`. */
+  fact: string;
+  /** How to speak it. `{value}` is the fact's value. */
+  say: (value: string) => string;
+};
+
+const FAQ_RULES: FaqRule[] = [
+  {
+    test: /\b(?:do you |is there (?:a|any) |what(?:'s| is) the )?(?:charge|cost|fee|price)\b.*\b(?:call ?out|come out|visit|diagnos|turn up|show up)\b|\bcall ?out (?:fee|charge|cost)\b/i,
+    fact: "pricing/Diagnostic visit",
+    say: (v) => `The diagnostic visit is ${v}.`,
+  },
+  {
+    test: /\b(?:after[- ]?hours|out of hours|emergency)\b.*\b(?:cost|charge|price|fee|rate)\b|\bhow much\b.*\bemergency\b/i,
+    fact: "pricing/Emergency after-hours callout",
+    say: (v) => `An emergency after-hours callout is ${v}.`,
+  },
+  {
+    test: /\b(?:maintenance|service) (?:plan|contract|agreement)\b|\bannual (?:plan|maintenance|service)\b/i,
+    fact: "pricing/Annual maintenance plan",
+    say: (v) => `Our annual maintenance plan is ${v}.`,
+  },
+  {
+    test: /\b(?:what|which) (?:services|work|jobs)\b.*\b(?:do you|you do|offer|provide)\b|\bwhat do you (?:do|offer|handle)\b/i,
+    fact: "services/Offered",
+    say: (v) => `We handle ${v}.`,
+  },
+  {
+    test: /\b(?:do you (?:take|accept)|how (?:do|can) i pay|payment (?:options|methods))\b|\bcan i pay by\b/i,
+    fact: "policy/Payment",
+    say: (v) => `${v}.`,
+  },
+  {
+    test: /\b(?:what(?:'s| is) (?:the|your) )?warranty\b|\bguarantee(?:d)? (?:on|for) (?:the|your) work\b/i,
+    fact: "policy/Warranty",
+    say: (v) => `${v}.`,
+  },
+  {
+    test: /\b(?:cancel|cancellation|reschedul)\w*\b.*\b(?:policy|fee|charge|free)\b|\bwhat if i (?:need to )?cancel\b/i,
+    fact: "policy/Cancellation",
+    say: (v) => `${v}.`,
+  },
+];
+
+/* ── 2. Prefixes, spoken while the model works ──────────────────────────── */
+
+type PrefixRule = { intent: string; test: RegExp; openers: string[] };
+
+const PREFIX_RULES: PrefixRule[] = [
+  {
+    intent: "breakdown",
+    test: /\b(?:not (?:working|cooling|heating|turning on)|stopped working|broken|broke down|won'?t (?:turn on|start|work|cool|heat)|no (?:heat|cooling|air)|blowing (?:warm|cold|hot))\b/i,
+    openers: [
+      "Sorry to hear that.",
+      "Okay, sorry you're dealing with that.",
+      "Right, let's get that sorted.",
+    ],
+  },
+  {
+    intent: "emergency",
+    test: /\b(?:emergency|urgent|right away|as soon as possible|asap|freezing|no heat at all|flooding|burst)\b/i,
+    openers: [
+      "Okay, that's one we prioritise.",
+      "Right, let's treat that as urgent.",
+    ],
+  },
+  {
+    intent: "noise_or_smell",
+    test: /\b(?:strange|weird|odd|loud|banging|rattling|grinding|squealing) (?:noise|sound)\b|\b(?:smell|smells|burning|odour|odor)\b/i,
+    openers: [
+      "Okay, worth looking at properly.",
+      "Right, let's get a technician on that.",
+    ],
+  },
+  {
+    intent: "leak",
+    test: /\b(?:leak|leaking|dripping|water (?:coming|pooling)|puddle)\b/i,
+    openers: [
+      "Okay, a leak we want to catch early.",
+      "Right, let's get that looked at.",
+    ],
+  },
+  {
+    intent: "booking",
+    test: /\b(?:can (?:someone|you) come|book|schedule|appointment|available|availability|when can you)\b/i,
+    openers: [
+      "Sure, let me check what we have.",
+      "Of course, let me look at the diary.",
+    ],
+  },
+  {
+    intent: "quote",
+    test: /\b(?:quote|estimate|how much (?:would|will|does)|what would it cost|ballpark)\b/i,
+    openers: [
+      "Happy to help with that.",
+      "Sure, let me explain how that works.",
+    ],
+  },
+];
+
+/* ── Resolution ─────────────────────────────────────────────────────────── */
+
+export async function resolveFastPath(
+  tenantId: string,
+  text: string,
+  seed = Math.random(),
+): Promise<FastPath> {
+  const t = text.trim();
+  if (t.length === 0) return { kind: "none" };
+
+  // A full answer only fires when the question is ALL the caller asked. A
+  // compound message ("it's broken, and what's the call-out?") needs the model.
+  const sentences = t.split(/[.!?]+/).map((x) => x.trim()).filter(Boolean);
+  if (sentences.length === 1 && t.split(/\s+/).length <= 16) {
+    for (const rule of FAQ_RULES) {
+      if (!rule.test.test(t)) continue;
+      const [category, key] = rule.fact.split("/");
+      const fact = await db.query.knowledgeFacts.findFirst({
+        where: and(
+          eq(knowledgeFacts.tenantId, tenantId),
+          eq(knowledgeFacts.category, category),
+          eq(knowledgeFacts.key, key),
+        ),
+      });
+      // No fact on file means no canned answer — never invent one.
+      if (fact) return { kind: "full", text: rule.say(fact.value), factKey: rule.fact };
+    }
+  }
+
+  for (const rule of PREFIX_RULES) {
+    if (rule.test.test(t)) {
+      const opener = rule.openers[Math.floor(seed * rule.openers.length) % rule.openers.length];
+      return { kind: "prefix", text: opener, intent: rule.intent };
+    }
+  }
+
+  return { kind: "none" };
+}
+
+/* ── Cleanup ────────────────────────────────────────────────────────────── */
+
+/** Generic openers that are redundant once a prefix has already been spoken. */
+const REDUNDANT_OPENER =
+  /^(?:(?:well|so|okay|ok|alright|right|sure|yes|yeah|absolutely|of course|certainly|no problem|got it|understood|i see|i understand)[,.!]?\s+)+/i;
+
+const REDUNDANT_PHRASE =
+  /^(?:i can (?:certainly |definitely )?help (?:you )?with that|i'?d be happy to help(?: with that)?|happy to help(?: with that)?|let me help (?:you )?with that|sorry to hear that|sorry about that|that(?:'s| is) (?:no good|frustrating|rough))[,.!]?\s*/i;
+
+/**
+ * Tidy the model's continuation after a prefix was already spoken aloud.
+ *
+ * A 3B model follows "do not repeat the acknowledgement" only sometimes, and
+ * "Right, let's get that sorted. I can help with that." lands as two openers
+ * in a row. Stripping them deterministically is more reliable than asking
+ * again, and costs nothing.
+ *
+ * Also removes stray wrapping quotes, which small models emit surprisingly
+ * often and which a text-to-speech voice reads as a pause or a literal
+ * "quote".
+ */
+export function cleanContinuation(text: string, hadPrefix: boolean): string {
+  let out = text.trim();
+
+  // Unbalanced or wrapping quotes around the whole reply.
+  out = out.replace(/^["'“”']+/, "").replace(/["'“”']+$/, "");
+
+  if (hadPrefix) {
+    const before = out;
+    out = out.replace(REDUNDANT_PHRASE, "");
+    out = out.replace(REDUNDANT_OPENER, "");
+    // Only re-capitalise if something was actually removed.
+    if (out !== before && out.length > 0) out = out[0].toUpperCase() + out.slice(1);
+  }
+
+  return out.trim();
+}

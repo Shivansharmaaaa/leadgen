@@ -21,13 +21,37 @@ PORT = int(os.environ.get("TTS_PORT", "8787"))
 DEFAULT_VOICE = os.environ.get("TTS_VOICE", "af_heart")
 SAMPLE_RATE = 24000
 
+# Openers the agent says constantly. Synthesised once at startup so the first
+# thing a caller hears costs a dictionary lookup rather than ~800ms of GPU.
+# Must stay in step with PREFIX_RULES in src/server/agent/fast-path.ts.
+WARM_PHRASES = [
+    "Sorry to hear that.",
+    "Okay, sorry you're dealing with that.",
+    "Right, let's get that sorted.",
+    "Okay, that's one we prioritise.",
+    "Right, let's treat that as urgent.",
+    "Okay, worth looking at properly.",
+    "Right, let's get a technician on that.",
+    "Okay, a leak we want to catch early.",
+    "Right, let's get that looked at.",
+    "Sure, let me check what we have.",
+    "Of course, let me look at the diary.",
+    "Happy to help with that.",
+    "Sure, let me explain how that works.",
+    "Sorry, could you say that again?",
+    "Let me get a colleague to help you with that — someone will call you right back.",
+]
+
+CACHE: dict[tuple[str, str], bytes] = {}
+CACHE_LIMIT = 256
+
 device = "mps" if torch.backends.mps.is_available() else "cpu"
 print(f"[tts] loading Kokoro on {device} …", flush=True)
 _t = time.time()
 PIPELINE = KPipeline(lang_code="a", device=device)
 # Warm the graph so the first real request is not the slow one.
 list(PIPELINE("Ready.", voice=DEFAULT_VOICE))
-print(f"[tts] ready in {time.time() - _t:.1f}s on {device}", flush=True)
+print(f"[tts] model ready in {time.time() - _t:.1f}s on {device}", flush=True)
 
 
 # Metal command buffers cannot be driven from several threads at once: two
@@ -38,7 +62,30 @@ print(f"[tts] ready in {time.time() - _t:.1f}s on {device}", flush=True)
 _GPU_LOCK = threading.Lock()
 
 
+def trim_silence(audio: "np.ndarray", threshold: float = 0.0025) -> "np.ndarray":
+    """
+    Drop near-silent head and tail.
+
+    Kokoro pads each clip with a little silence. Harmless on its own, but when
+    a reply is spoken as several clips in a row those pads stack into an
+    audible gap at every comma and full stop, which is what makes the agent
+    sound hesitant rather than fluent.
+    """
+    loud = np.abs(audio) > threshold
+    if not loud.any():
+        return audio
+    first, last = int(np.argmax(loud)), len(loud) - int(np.argmax(loud[::-1]))
+    # Leave ~15ms so words are not clipped at the edges.
+    pad = int(0.015 * SAMPLE_RATE)
+    return audio[max(0, first - pad):min(len(audio), last + pad)]
+
+
 def synth(text: str, voice: str) -> bytes:
+    key = (text, voice)
+    hit = CACHE.get(key)
+    if hit is not None:
+        return hit
+
     with _GPU_LOCK:
         chunks = [c[2] for c in PIPELINE(text, voice=voice)]
     if not chunks:
@@ -46,6 +93,7 @@ def synth(text: str, voice: str) -> bytes:
     audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
     if hasattr(audio, "detach"):
         audio = audio.detach().cpu().numpy()
+    audio = trim_silence(audio)
     pcm = np.clip(audio, -1.0, 1.0)
     pcm = (pcm * 32767).astype("<i2")
 
@@ -55,7 +103,12 @@ def synth(text: str, voice: str) -> bytes:
         w.setsampwidth(2)
         w.setframerate(SAMPLE_RATE)
         w.writeframes(pcm.tobytes())
-    return buf.getvalue()
+    data = buf.getvalue()
+
+    if len(CACHE) >= CACHE_LIMIT:
+        CACHE.pop(next(iter(CACHE)))
+    CACHE[key] = data
+    return data
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -68,7 +121,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/health"):
-            body = json.dumps({"ok": True, "device": device, "voice": DEFAULT_VOICE}).encode()
+            body = json.dumps({"ok": True, "device": device, "voice": DEFAULT_VOICE,
+                               "cached": len(CACHE)}).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self._cors(); self.send_header("content-length", str(len(body)))
@@ -94,6 +148,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("content-type", "audio/wav")
             self.send_header("x-generation-ms", str(ms))
+            self.send_header("x-cache", "hit" if ms < 5 else "miss")
             self._cors(); self.send_header("content-length", str(len(wav)))
             self.end_headers(); self.wfile.write(wav)
         except Exception as e:  # noqa: BLE001 — surface, do not crash the service
@@ -105,5 +160,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    _w = time.time()
+    for phrase in WARM_PHRASES:
+        synth(phrase, DEFAULT_VOICE)
+    print(f"[tts] pre-rendered {len(WARM_PHRASES)} openers in {time.time() - _w:.1f}s", flush=True)
     print(f"[tts] listening on http://127.0.0.1:{PORT}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

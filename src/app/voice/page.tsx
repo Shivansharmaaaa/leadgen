@@ -71,11 +71,32 @@ export default function VoicePage() {
    * clip finishes. Falls back to the browser's own voice if the local TTS
    * service is not running.
    */
-  const speakQueue = useRef<{ text: string; audio?: Promise<Blob | null> }[]>([]);
-  const speaking = useRef(false);
-  const audioEl = useRef<HTMLAudioElement | null>(null);
+  /**
+   * Gapless playback.
+   *
+   * A reply is spoken as several clips — one per sentence — so that the first
+   * sentence starts while the rest is still being generated. Playing them as
+   * sequential <audio> elements leaves a pause at every comma and full stop,
+   * which is what made the agent sound hesitant.
+   *
+   * Web Audio schedules each clip to begin exactly where the previous one
+   * ends, on the audio clock rather than a JavaScript timer, so the seams are
+   * inaudible. Synthesis for every sentence starts the moment its text
+   * arrives, so only the first one ever waits — and the common openers are
+   * pre-rendered server-side, so usually not even that.
+   */
+  const audioCtx = useRef<AudioContext | null>(null);
+  const nextStartAt = useRef(0);
+  const scheduled = useRef<AudioBufferSourceNode[]>([]);
+  const chain = useRef<Promise<void>>(Promise.resolve());
 
-  const fetchSpeech = useCallback(async (text: string): Promise<Blob | null> => {
+  const ctx = useCallback(() => {
+    audioCtx.current ??= new (window.AudioContext ?? (window as any).webkitAudioContext)();
+    if (audioCtx.current.state === "suspended") void audioCtx.current.resume();
+    return audioCtx.current;
+  }, []);
+
+  const fetchSpeech = useCallback(async (text: string): Promise<ArrayBuffer | null> => {
     try {
       const res = await fetch("/api/voice/tts", {
         method: "POST",
@@ -83,14 +104,14 @@ export default function VoicePage() {
         body: JSON.stringify({ text }),
       });
       if (!res.ok) return null;
-      return await res.blob();
+      return await res.arrayBuffer();
     } catch {
       return null;
     }
   }, []);
 
-  const fallbackSpeak = useCallback((text: string, done: () => void) => {
-    if (!("speechSynthesis" in window)) { done(); return; }
+  const fallbackSpeak = useCallback((text: string) => {
+    if (!("speechSynthesis" in window)) return;
     const u = new SpeechSynthesisUtterance(text);
     const voices = window.speechSynthesis.getVoices();
     const preferred =
@@ -98,36 +119,49 @@ export default function VoicePage() {
       voices.find((v) => v.lang.startsWith("en"));
     if (preferred) u.voice = preferred;
     u.rate = 1.04;
-    u.onend = done;
-    u.onerror = done;
     window.speechSynthesis.speak(u);
   }, []);
 
-  const drainQueue = useCallback(async () => {
-    if (speaking.current) return;
-    const next = speakQueue.current.shift();
-    if (!next) return;
-    speaking.current = true;
-
-    const finish = () => { speaking.current = false; void drainQueue(); };
-    const blob = await (next.audio ?? fetchSpeech(next.text));
-
-    if (!blob) { fallbackSpeak(next.text, finish); return; }
-
-    const url = URL.createObjectURL(blob);
-    const el = audioEl.current ?? new Audio();
-    audioEl.current = el;
-    el.src = url;
-    el.onended = () => { URL.revokeObjectURL(url); finish(); };
-    el.onerror = () => { URL.revokeObjectURL(url); fallbackSpeak(next.text, finish); };
-    void el.play().catch(() => { URL.revokeObjectURL(url); fallbackSpeak(next.text, finish); });
-  }, [fetchSpeech, fallbackSpeak]);
-
-  /** Queue a sentence and start synthesising it immediately, in parallel. */
+  /**
+   * Queue a sentence. Synthesis begins immediately; scheduling is chained so
+   * clips are appended to the timeline in the order they were spoken, however
+   * the network returns them.
+   */
   const enqueueSpeech = useCallback((text: string) => {
-    speakQueue.current.push({ text, audio: fetchSpeech(text) });
-    void drainQueue();
-  }, [fetchSpeech, drainQueue]);
+    const pending = fetchSpeech(text);
+    chain.current = chain.current.then(async () => {
+      const bytes = await pending;
+      if (!bytes) { fallbackSpeak(text); return; }
+      try {
+        const ac = ctx();
+        const buffer = await ac.decodeAudioData(bytes);
+        const src = ac.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ac.destination);
+
+        // Start where the last clip ends, or now if the queue has drained.
+        const startAt = Math.max(ac.currentTime + 0.02, nextStartAt.current);
+        src.start(startAt);
+        nextStartAt.current = startAt + buffer.duration;
+
+        scheduled.current.push(src);
+        src.onended = () => {
+          scheduled.current = scheduled.current.filter((x) => x !== src);
+        };
+      } catch {
+        fallbackSpeak(text);
+      }
+    });
+  }, [ctx, fetchSpeech, fallbackSpeak]);
+
+  /** Stop whatever the agent is saying — the caller has started talking. */
+  const stopSpeaking = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    for (const src of scheduled.current) { try { src.stop(); } catch { /* already ended */ } }
+    scheduled.current = [];
+    nextStartAt.current = 0;
+    chain.current = Promise.resolve();
+  }, []);
 
   const send = useCallback(async (text: string, opts: { speculative?: boolean } = {}) => {
     inflight.current?.abort();
@@ -136,10 +170,7 @@ export default function VoicePage() {
 
     setTurns((t) => [...t, { who: "you", text }]);
     setThinking(true);
-    window.speechSynthesis?.cancel();
-    audioEl.current?.pause();
-    speakQueue.current = [];
-    speaking.current = false;
+    stopSpeaking();
 
     const tools: { name: string; ok: boolean; ms: number }[] = [];
     let spoken = "";
@@ -232,15 +263,7 @@ export default function VoicePage() {
       if (inflight.current === controller) inflight.current = null;
       setThinking(false);
     }
-  }, [enqueueSpeech]);
-
-  /** Stop whatever the agent is saying — the caller has started talking. */
-  const stopSpeaking = useCallback(() => {
-    window.speechSynthesis?.cancel();
-    if (audioEl.current) { audioEl.current.pause(); audioEl.current.currentTime = 0; }
-    speakQueue.current = [];
-    speaking.current = false;
-  }, []);
+  }, [enqueueSpeech, stopSpeaking]);
 
   const normalise = (t: string) => t.trim().toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ");
 

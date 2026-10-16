@@ -11,6 +11,7 @@ import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "
 import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 import { qualifyFromTranscript } from "./post-turn";
 import { screenScope, overBudget, MAX_AI_TURNS } from "@/server/core/scope";
+import { resolveFastPath, cleanContinuation } from "./fast-path";
 
 /**
  * Low-latency agent turn for spoken channels.
@@ -84,8 +85,14 @@ export type VoiceEvent =
   | { type: "error"; message: string };
 
 /** Split a token stream into speakable sentences as soon as each completes. */
-function makeSentencer() {
+function makeSentencer(opts: { hadPrefix: boolean } = { hadPrefix: false }) {
   let buffer = "";
+  let first = true;
+  const tidy = (sentence: string) => {
+    if (!first) return sentence;
+    first = false;
+    return cleanContinuation(sentence, opts.hadPrefix);
+  };
   return {
     push(delta: string): string[] {
       buffer += delta;
@@ -95,19 +102,24 @@ function makeSentencer() {
       let consumed = 0;
       let m: RegExpExecArray | null;
       while ((m = re.exec(buffer)) !== null) {
-        const sentence = m[1].trim();
+        const sentence = tidy(m[1].trim());
         if (sentence.length > 0) { out.push(sentence); consumed = m.index + m[0].length; }
+        else consumed = m.index + m[0].length;
       }
       if (consumed > 0) buffer = buffer.slice(consumed);
       // Long clause with no punctuation yet — speak it anyway rather than stall.
       if (buffer.length > 160) {
         const cut = buffer.lastIndexOf(" ", 160);
-        if (cut > 40) { out.push(buffer.slice(0, cut).trim()); buffer = buffer.slice(cut + 1); }
+        if (cut > 40) {
+          const chunk = tidy(buffer.slice(0, cut).trim());
+          if (chunk) out.push(chunk);
+          buffer = buffer.slice(cut + 1);
+        }
       }
       return out;
     },
     flush(): string | null {
-      const rest = buffer.trim();
+      const rest = tidy(buffer.trim());
       buffer = "";
       return rest.length > 0 ? rest : null;
     },
@@ -238,6 +250,40 @@ export async function* runVoiceTurn(opts: {
     return;
   }
 
+  /**
+   * Fast path.
+   *
+   * A question with one fixed answer is served from the tenant's own verified
+   * facts with no generation at all. Everything else that matches a known
+   * intent gets an opener spoken immediately, so the caller hears a reply at
+   * ~0ms while the model writes the substance behind it.
+   */
+  let spokenPrefix: string | null = null;
+  if (latestInbound) {
+    const fast = await resolveFastPath(tenant.id, latestInbound.body);
+
+    if (fast.kind === "full") {
+      await db.insert(messagesTable).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        direction: "outbound", channel: "voice", authorType: "ai",
+        body: fast.text, status: "sent", meta: { fastPath: fast.factKey },
+      });
+      yield { type: "sentence", text: fast.text, msSinceStart: Date.now() - started };
+      void qualifyFromTranscript(conversation.id).catch(() => {});
+      yield {
+        type: "done", fullText: fast.text, latencyMs: Date.now() - started,
+        firstWordMs: Date.now() - started, provider: "fast-path", model: fast.factKey,
+      };
+      return;
+    }
+
+    if (fast.kind === "prefix") {
+      spokenPrefix = fast.text;
+      firstWordMs = Date.now() - started;
+      yield { type: "sentence", text: fast.text, msSinceStart: firstWordMs };
+    }
+  }
+
   const [knowledge, memories] = await Promise.all([
     loadKnowledge(tenant.id),
     recall(contact.id, 10),
@@ -261,7 +307,7 @@ export async function* runVoiceTurn(opts: {
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const sentencer = makeSentencer();
+      const sentencer = makeSentencer({ hadPrefix: Boolean(spokenPrefix) });
       let turnText = "";
 
       if (!provider.stream) {
@@ -389,11 +435,12 @@ export async function* runVoiceTurn(opts: {
     yield { type: "held", reason: verdict.holdReason ?? "guardrail" };
   }
 
-  if (fullText.trim()) {
+  const storedText = spokenPrefix ? `${spokenPrefix} ${fullText}`.trim() : fullText;
+  if (storedText.trim()) {
     await db.insert(messagesTable).values({
       tenantId: tenant.id, conversationId: conversation.id,
       direction: "outbound", channel: "voice", authorType: "ai",
-      body: fullText.trim(),
+      body: storedText.trim(),
       status: verdict.allow ? "sent" : "held_for_review",
       meta: verdict.allow ? {} : { holdReason: verdict.holdReason, alreadySpoken: true },
     });
