@@ -14,6 +14,10 @@ export default async function DashboardPage() {
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px 100px" }}>
       <Header title={data.tenant.name} subtitle={`Last ${data.days} days`} />
+      <nav style={{ display: "flex", gap: 16, margin: "-20px 0 28px", fontSize: 13 }}>
+        <Link href="/inbox" style={{ color: "var(--accent)" }}>Inbox</Link>
+        <Link href="/settings" style={{ color: "var(--accent)" }}>Settings</Link>
+      </nav>
 
       <Section title="What the AI captured">
         <div style={grid}>

@@ -20,6 +20,14 @@ export default function Home() {
           📊 <strong>Dashboard</strong>
           <span style={subStyle}>What the AI actually captured.</span>
         </Link>
+        <Link href="/widget-demo.html" style={cardStyle}>
+          🗨 <strong>Website chat</strong>
+          <span style={subStyle}>The chat bubble a client puts on their site.</span>
+        </Link>
+        <Link href="/settings" style={cardStyle}>
+          ⚙️ <strong>Settings</strong>
+          <span style={subStyle}>Team alerts, lead intake, website chat, CRM.</span>
+        </Link>
       </div>
     </main>
   );

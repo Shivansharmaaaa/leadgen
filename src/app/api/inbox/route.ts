@@ -4,6 +4,7 @@ import { db, conversations, messages, contacts, staff, events } from "@/server/d
 import { deliver } from "@/server/core/ingest";
 import { screenOutbound } from "@/server/core/guardrails";
 import { recordOutreachOutcome } from "@/server/learning/incrementality";
+import { requireOwner } from "@/server/auth/owner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,13 @@ type Action =
   | { action: "discard_draft"; messageId: string };
 
 export async function POST(req: Request) {
+  // The middleware guards this path; checked again here so the API that
+  // texts customers as the business never depends on one matcher alone.
+  try {
+    await requireOwner();
+  } catch {
+    return NextResponse.json({ error: "sign in required" }, { status: 401 });
+  }
   let payload: Action;
   try {
     payload = await req.json();
