@@ -10,6 +10,7 @@ import { buildSystemPrompt } from "./prompt";
 import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
 import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 import { qualifyFromTranscript } from "./post-turn";
+import { screenScope, overBudget, MAX_AI_TURNS } from "@/server/core/scope";
 
 /**
  * Low-latency agent turn for spoken channels.
@@ -192,6 +193,42 @@ export async function* runVoiceTurn(opts: {
       };
       return;
     }
+  }
+
+  // Scope gate — answered without a model call, so an off-topic question
+  // costs no tokens and no latency.
+  if (latestInbound) {
+    const businessName = tenant.settings?.businessName ?? tenant.name;
+    const scope = screenScope(latestInbound.body, businessName);
+    if (!scope.inScope) {
+      await db.insert(messagesTable).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        direction: "outbound", channel: "voice", authorType: "ai",
+        body: scope.reply, status: "sent", meta: { scopeRedirect: scope.kind },
+      });
+      yield { type: "sentence", text: scope.reply, msSinceStart: Date.now() - started };
+      yield {
+        type: "done", fullText: scope.reply, latencyMs: Date.now() - started,
+        firstWordMs: Date.now() - started, provider: "scope-guard", model: "n/a",
+      };
+      return;
+    }
+  }
+
+  // Budget gate — a conversation this long belongs to a person.
+  const aiTurns = ordered.filter((m) => m.direction === "outbound" && m.authorType === "ai").length;
+  if (overBudget(aiTurns)) {
+    await executeTool(ctx, "escalate_to_human", {
+      reason: `conversation exceeded ${MAX_AI_TURNS} AI turns`, urgency: "soon",
+    });
+    const handoff = "Let me get a colleague to pick this up with you — someone will call you shortly.";
+    yield { type: "sentence", text: handoff, msSinceStart: Date.now() - started };
+    yield { type: "escalated", reason: "turn budget exceeded" };
+    yield {
+      type: "done", fullText: handoff, latencyMs: Date.now() - started,
+      firstWordMs: Date.now() - started, provider: "budget-guard", model: "n/a",
+    };
+    return;
   }
 
   const [knowledge, memories] = await Promise.all([

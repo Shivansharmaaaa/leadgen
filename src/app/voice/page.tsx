@@ -57,30 +57,78 @@ export default function VoicePage() {
    * Speak sentences in order as they stream in. Queued rather than fired
    * immediately, because speechSynthesis will talk over itself otherwise.
    */
-  const speakQueue = useRef<string[]>([]);
+  /**
+   * Speak each sentence as it arrives, in order.
+   *
+   * Kokoro renders a sentence in well under the time the model takes to
+   * generate the next one, so only the FIRST sentence pays the synthesis
+   * cost — everything after it is already queued by the time the previous
+   * clip finishes. Falls back to the browser's own voice if the local TTS
+   * service is not running.
+   */
+  const speakQueue = useRef<{ text: string; audio?: Promise<Blob | null> }[]>([]);
   const speaking = useRef(false);
+  const audioEl = useRef<HTMLAudioElement | null>(null);
 
-  const drainQueue = useCallback(() => {
+  const fetchSpeech = useCallback(async (text: string): Promise<Blob | null> => {
+    try {
+      const res = await fetch("/api/voice/tts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) return null;
+      return await res.blob();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const fallbackSpeak = useCallback((text: string, done: () => void) => {
+    if (!("speechSynthesis" in window)) { done(); return; }
+    const u = new SpeechSynthesisUtterance(text);
+    const voices = window.speechSynthesis.getVoices();
+    const preferred =
+      voices.find((v) => /Samantha|Ava|Allison|Serena|Daniel/i.test(v.name)) ??
+      voices.find((v) => v.lang.startsWith("en"));
+    if (preferred) u.voice = preferred;
+    u.rate = 1.04;
+    u.onend = done;
+    u.onerror = done;
+    window.speechSynthesis.speak(u);
+  }, []);
+
+  const drainQueue = useCallback(async () => {
     if (speaking.current) return;
     const next = speakQueue.current.shift();
     if (!next) return;
     speaking.current = true;
-    const u = new SpeechSynthesisUtterance(next);
-    const voices = window.speechSynthesis.getVoices();
-    const preferred =
-      voices.find((v) => /Samantha|Ava|Allison|Serena|Zoe|Daniel/i.test(v.name)) ??
-      voices.find((v) => v.lang.startsWith("en"));
-    if (preferred) u.voice = preferred;
-    u.rate = 1.04;
-    u.onend = () => { speaking.current = false; drainQueue(); };
-    u.onerror = () => { speaking.current = false; drainQueue(); };
-    window.speechSynthesis.speak(u);
-  }, []);
+
+    const finish = () => { speaking.current = false; void drainQueue(); };
+    const blob = await (next.audio ?? fetchSpeech(next.text));
+
+    if (!blob) { fallbackSpeak(next.text, finish); return; }
+
+    const url = URL.createObjectURL(blob);
+    const el = audioEl.current ?? new Audio();
+    audioEl.current = el;
+    el.src = url;
+    el.onended = () => { URL.revokeObjectURL(url); finish(); };
+    el.onerror = () => { URL.revokeObjectURL(url); fallbackSpeak(next.text, finish); };
+    void el.play().catch(() => { URL.revokeObjectURL(url); fallbackSpeak(next.text, finish); });
+  }, [fetchSpeech, fallbackSpeak]);
+
+  /** Queue a sentence and start synthesising it immediately, in parallel. */
+  const enqueueSpeech = useCallback((text: string) => {
+    speakQueue.current.push({ text, audio: fetchSpeech(text) });
+    void drainQueue();
+  }, [fetchSpeech, drainQueue]);
 
   const send = useCallback(async (text: string) => {
     setTurns((t) => [...t, { who: "you", text }]);
     setThinking(true);
     window.speechSynthesis?.cancel();
+    audioEl.current?.pause();
     speakQueue.current = [];
     speaking.current = false;
 
@@ -123,8 +171,7 @@ export default function VoicePage() {
             const sentence = String(ev.text);
             firstWordMs ??= Number(ev.msSinceStart);
             spoken = spoken ? `${spoken} ${sentence}` : sentence;
-            speakQueue.current.push(sentence);
-            drainQueue();
+            enqueueSpeech(sentence);
             setThinking(false);
 
             // Grow one agent bubble rather than adding one per sentence.
@@ -171,7 +218,7 @@ export default function VoicePage() {
     } finally {
       setThinking(false);
     }
-  }, [drainQueue]);
+  }, [enqueueSpeech]);
 
   const toggleMic = useCallback(() => {
     const rec = recognitionRef.current;
