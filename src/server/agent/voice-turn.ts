@@ -309,7 +309,9 @@ export async function* runVoiceTurn(opts: {
    */
   let spokenPrefix: string | null = null;
   if (latestInbound) {
-    const fast = await resolveFastPath(tenant.id, latestInbound.body);
+    const agentHasSpoken = ordered.some((m) => m.direction === "outbound");
+    const fast = await resolveFastPath(
+      tenant.id, latestInbound.body, Math.random(), { alreadySpoken: agentHasSpoken });
 
     if (fast.kind === "full") {
       await db.insert(messagesTable).values({
@@ -351,6 +353,12 @@ export async function* runVoiceTurn(opts: {
       "You are SPEAKING on a live call. One short sentence, two at most, then stop.",
       "Use contractions. No markdown, no lists, no emoji, no URLs.",
       "",
+      ordered.some((m) => m.direction === "outbound")
+        ? "You are ALREADY mid-conversation with this person. Do NOT greet them again, " +
+          "do NOT introduce yourself again, and do NOT repeat anything you have already " +
+          "said — look at the exchange above and move it forward."
+        : "This is the first thing they have said.",
+      "",
       "This is small talk, not a service request. Answer what they ACTUALLY said",
       "and then offer to help — never ask how their day is going, and never ask",
       "a question that ignores what they just told you.",
@@ -364,6 +372,10 @@ export async function* runVoiceTurn(opts: {
       "Never state a price, a time or a policy here — if they ask for one, say",
       "you'll check and stop.",
       "Never invent a colleague's name. Say \"a colleague\" or \"someone from the team\".",
+      "",
+      "If they repeat themselves, do NOT repeat your previous answer. Vary it, or",
+      "ask something that moves things on — \"can you hear me alright?\", \"what's",
+      "going on with the system?\"",
       spokenPrefix ? `\nYou have just said out loud: "${spokenPrefix}" — continue from there, do not repeat it.` : "",
     ].join("\n");
 

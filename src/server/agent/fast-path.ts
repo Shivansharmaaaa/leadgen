@@ -241,10 +241,14 @@ const PREFIX_RULES: PrefixRule[] = [
 
 /* ── Resolution ─────────────────────────────────────────────────────────── */
 
+/** Openers that only make sense once a conversation. */
+const ONCE_ONLY = new Set(["greeting", "presence"]);
+
 export async function resolveFastPath(
   tenantId: string,
   text: string,
   seed = Math.random(),
+  opts: { alreadySpoken?: boolean } = {},
 ): Promise<FastPath> {
   const t = text.trim();
   if (t.length === 0) return { kind: "none" };
@@ -269,6 +273,9 @@ export async function resolveFastPath(
   }
 
   for (const rule of PREFIX_RULES) {
+    // Greeting someone who is already mid-conversation is the clearest
+    // possible signal that nothing is being remembered.
+    if (opts.alreadySpoken && ONCE_ONLY.has(rule.intent)) continue;
     if (rule.test.test(t)) {
       const opener = rule.openers[Math.floor(seed * rule.openers.length) % rule.openers.length];
       return { kind: "prefix", text: opener, intent: rule.intent };
@@ -286,6 +293,13 @@ const REDUNDANT_OPENER =
 
 const REDUNDANT_PHRASE =
   /^(?:i can (?:certainly |definitely )?help (?:you )?with that|i'?d be happy to help(?: with that)?|happy to help(?: with that)?|let me help (?:you )?with that|sorry to hear that|sorry about that|that(?:'s| is) (?:no good|frustrating|rough))[,.!]?\s*/i;
+
+/**
+ * A greeting the model adds after the opener already greeted them.
+ * "Hi there. Hi there. I'm Alex..." is the exact failure this removes.
+ */
+const REDUNDANT_GREETING =
+  /^(?:hi(?: there)?|hello(?: there)?|hey(?: there)?|good (?:morning|afternoon|evening))[,.!]?\s*/i;
 
 /**
  * Tidy the model's continuation after a prefix was already spoken aloud.
@@ -307,6 +321,7 @@ export function cleanContinuation(text: string, hadPrefix: boolean): string {
 
   if (hadPrefix) {
     const before = out;
+    out = out.replace(REDUNDANT_GREETING, "");
     out = out.replace(REDUNDANT_PHRASE, "");
     out = out.replace(REDUNDANT_OPENER, "");
     // Only re-capitalise if something was actually removed.
