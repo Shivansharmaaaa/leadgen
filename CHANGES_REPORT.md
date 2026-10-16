@@ -13,6 +13,7 @@ Apple Silicon Mac running `llama3.2:3b` locally through Ollama.
 | Fixed-fact question ("do you charge for the call-out?") | full model turn | **8–20 ms**, zero tokens |
 | Off-topic question ("what model are you?") | full model turn | **5–15 ms**, zero tokens |
 | Voice | browser `speechSynthesis` | **Kokoro-82M** on the Apple GPU, RTF 0.05 |
+| Transcription | browser recogniser (drops words) | **Parakeet TDT 0.6B**: 0 % WER on 73 words, 51 ms per utterance |
 | Eval, 26 scenarios | — | **92 %** (54/56 checks) |
 
 ## Speed
@@ -92,7 +93,11 @@ Adopted from how production speech-to-speech systems manage the floor:
 
 - **Moshi** (Kyutai, q4) downloaded and running; it belongs only on the `chat`
   tier, since it cannot call tools or be screened by the outbound guardrail.
-- **Parakeet** (`parakeet-mlx`) installed to replace the browser recogniser.
+- **Parakeet** (`parakeet-mlx`, TDT 0.6B) transcribes each utterance on the
+  Apple GPU: 0 % word error rate over eight test sentences (phone number,
+  address, brand, year, price), median 51 ms for ~3.4 s of speech. Chrome
+  still decides *when* the caller has stopped; Parakeet decides *what* they
+  said, with the browser transcript as a bounded fallback.
 - **Separate virtualenvs** per service (`tts/`, `moshi/`, `stt/`). Installing
   Moshi into the TTS venv pinned `huggingface_hub` and `safetensors` back and
   took the voice down mid-call.
@@ -100,7 +105,6 @@ Adopted from how production speech-to-speech systems manage the floor:
 
 ## Not done yet
 
-- Parakeet is installed but not yet wired into the browser.
 - The LoRA has not been trained on the conversion set; base weights are still
   downloading.
 - Moshi runs standalone at `localhost:8998` and is not yet routed into.
