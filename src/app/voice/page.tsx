@@ -10,6 +10,7 @@ const FILLERS = [
 ];
 
 const SIGNAL_COLOUR: Record<string, string> = {
+  "parakeet": "var(--accent)",
   "low confidence": "var(--danger)",
   "backchannel": "var(--accent)",
   "barge-in": "var(--warn)",
@@ -33,6 +34,7 @@ export default function VoicePage() {
   const [supported, setSupported] = useState(true);
   const [meta, setMeta] = useState<{ provider?: string; model?: string; productionGrade?: boolean }>({});
   const [ttsReady, setTtsReady] = useState<boolean | null>(null);
+  const [sttReady, setSttReady] = useState<boolean | null>(null);
   /**
    * A live trace of the turn-taking layer.
    *
@@ -88,6 +90,17 @@ export default function VoicePage() {
   const lastSpeechAt = useRef(0);
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /**
+   * Raw microphone audio for Parakeet, kept in a 60s ring at 16 kHz.
+   * `written` counts every sample ever captured, so an utterance can be cut
+   * out of the ring by absolute position however many times it has wrapped.
+   */
+  const RING = 16000 * 60;
+  const ring = useRef(new Float32Array(RING));
+  const written = useRef(0);
+  const utteranceStart = useRef<number | null>(null);
+  const capture = useRef<{ ctx: AudioContext; stream: MediaStream } | null>(null);
+
   useEffect(() => {
     sessionIdRef.current = `browser_${Math.random().toString(36).slice(2, 10)}`;
     const SR =
@@ -115,6 +128,10 @@ export default function VoicePage() {
       .then((r) => r.json())
       .then((d) => setTtsReady(Boolean(d?.ok)))
       .catch(() => setTtsReady(false));
+    fetch("/api/voice/stt")
+      .then((r) => r.json())
+      .then((d) => setSttReady(Boolean(d?.ok)))
+      .catch(() => setSttReady(false));
   }, []);
 
 
@@ -397,6 +414,77 @@ export default function VoicePage() {
     }
   }, [enqueueSpeech, stopSpeaking, note]);
 
+  /** Open a 16 kHz capture stream feeding the ring buffer. */
+  const startCapture = useCallback(async () => {
+    if (capture.current) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+      const ac = new AudioContext({ sampleRate: 16000 });
+      await ac.audioWorklet.addModule("/pcm-capture.js");
+      const node = new AudioWorkletNode(ac, "pcm-capture");
+      node.port.onmessage = (ev: MessageEvent<Float32Array>) => {
+        const frame = ev.data;
+        const buf = ring.current;
+        let pos = written.current % RING;
+        for (let i = 0; i < frame.length; i++) {
+          buf[pos] = frame[i];
+          pos = pos + 1 === RING ? 0 : pos + 1;
+        }
+        written.current += frame.length;
+      };
+      ac.createMediaStreamSource(stream).connect(node);
+      capture.current = { ctx: ac, stream };
+    } catch {
+      // No capture means Parakeet is skipped and the browser transcript is
+      // used — accuracy degrades, the call does not.
+      capture.current = null;
+    }
+  }, []);
+
+  const stopCapture = useCallback(() => {
+    capture.current?.stream.getTracks().forEach((t) => t.stop());
+    void capture.current?.ctx.close();
+    capture.current = null;
+  }, []);
+
+  /** Cut [start, now) out of the ring as 16-bit PCM. */
+  const cutUtterance = useCallback((start: number): ArrayBuffer | null => {
+    const end = written.current;
+    const from = Math.max(start, end - RING);
+    const n = end - from;
+    if (n < 1600) return null; // under 0.1s: nothing worth sending
+    const out = new Int16Array(n);
+    const buf = ring.current;
+    for (let i = 0; i < n; i++) {
+      const v = buf[(from + i) % RING];
+      out[i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+    }
+    return out.buffer;
+  }, []);
+
+  /**
+   * Ask Parakeet what was actually said. Bounded: if it is slow or down, the
+   * browser's transcript is used, because a correct word late is worse than a
+   * near-correct word on time.
+   */
+  const transcribe = useCallback(async (pcm: ArrayBuffer): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/voice/stt", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: pcm,
+        signal: AbortSignal.timeout(1500),
+      });
+      if (!res.ok) return null;
+      const d = await res.json();
+      return typeof d.text === "string" && d.text.trim() ? d.text.trim() : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const normalise = (t: string) => t.trim().toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ");
 
   /**
@@ -420,16 +508,37 @@ export default function VoicePage() {
     wantListening.current = true;
 
     /** Commit what the caller has said as one turn. */
-    const commitTurn = () => {
+    const commitTurn = async () => {
       if (commitTimer.current) { clearTimeout(commitTimer.current); commitTimer.current = null; }
       if (speculationTimer.current) { clearTimeout(speculationTimer.current); speculationTimer.current = null; }
 
-      const text = `${utterance.current} ${liveInterim.current}`.trim();
+      const browserText = `${utterance.current} ${liveInterim.current}`.trim();
+      const start = utteranceStart.current;
       utterance.current = "";
       liveInterim.current = "";
       lastPending.current = "";
+      utteranceStart.current = null;
       setInterim("");
-      if (!text) return;
+      if (!browserText) return;
+
+      // Chrome decided WHEN the caller stopped; Parakeet decides WHAT they said.
+      let text = browserText;
+      const pcm = start !== null ? cutUtterance(start) : null;
+      if (pcm) {
+        const t0 = performance.now();
+        const heard = await transcribe(pcm);
+        const ms = Math.round(performance.now() - t0);
+        if (heard) {
+          if (normalise(heard) !== normalise(browserText)) {
+            note("parakeet", `${ms}ms — corrected "${browserText.slice(0, 22)}" → "${heard.slice(0, 22)}"`);
+          } else {
+            note("parakeet", `${ms}ms — confirmed`);
+          }
+          text = heard;
+        } else {
+          note("parakeet", `unavailable — used browser transcript`);
+        }
+      }
 
       // The speculative run already started on exactly this — release it.
       if (speculatedFor.current && normalise(speculatedFor.current) === normalise(text)) {
@@ -490,6 +599,9 @@ export default function VoicePage() {
         }
       }
 
+      if (utteranceStart.current === null && (finalText.trim() || interimText.trim())) {
+        utteranceStart.current = Math.max(0, written.current - 16000 * 0.8);
+      }
       if (finalText.trim()) {
         utterance.current = `${utterance.current} ${finalText.trim()}`.trim();
       }
@@ -514,7 +626,7 @@ export default function VoicePage() {
       if (!Number.isFinite(delay)) {
         // Too little to judge yet — wait longer, but never forever.
         if (commitTimer.current) clearTimeout(commitTimer.current);
-        commitTimer.current = setTimeout(commitTurn, Math.max(0, 1800 - sinceSpeech));
+        commitTimer.current = setTimeout(() => void commitTurn(), Math.max(0, 1800 - sinceSpeech));
         return;
       }
 
@@ -522,7 +634,7 @@ export default function VoicePage() {
 
       // Commit once the caller has been quiet for the endpoint delay.
       if (commitTimer.current) clearTimeout(commitTimer.current);
-      commitTimer.current = setTimeout(commitTurn, Math.max(0, delay - sinceSpeech));
+      commitTimer.current = setTimeout(() => void commitTurn(), Math.max(0, delay - sinceSpeech));
 
       /**
        * Speculative start — silent pre-computation, released only on commit.
@@ -566,8 +678,9 @@ export default function VoicePage() {
       }
     };
 
+    void startCapture();
     try { rec.start(); setListening(true); } catch { /* already running */ }
-  }, [send, stopSpeaking, note, agentSpeaking, releaseSpeculation]);
+  }, [send, stopSpeaking, note, agentSpeaking, releaseSpeculation, startCapture, cutUtterance, transcribe]);
 
   const stopListening = useCallback(() => {
     wantListening.current = false;
@@ -575,9 +688,11 @@ export default function VoicePage() {
     if (commitTimer.current) clearTimeout(commitTimer.current);
     utterance.current = "";
     liveInterim.current = "";
+    utteranceStart.current = null;
+    stopCapture();
     recognitionRef.current?.stop();
     setListening(false);
-  }, []);
+  }, [stopCapture]);
 
   const toggleMic = useCallback(() => {
     if (listening) stopListening();
@@ -603,6 +718,20 @@ export default function VoicePage() {
         <Banner tone="warn">
           Kokoro voice service is not running — falling back to the browser&apos;s robotic
           voice. Start it with <code>npm run tts</code>, then reload.
+        </Banner>
+      )}
+      {sttReady === true && (
+        <div style={{
+          marginTop: 8, padding: "8px 14px", fontSize: 12, borderRadius: 10,
+          border: "1px solid var(--accent)", background: "var(--accent-dim)", color: "var(--accent)",
+        }}>
+          🎙 Parakeet transcription active (Apple GPU)
+        </div>
+      )}
+      {sttReady === false && (
+        <Banner tone="warn">
+          Parakeet is not running — using the browser&apos;s recogniser, which drops words.
+          Start it with <code>npm run stt</code>, then reload.
         </Banner>
       )}
       {ttsReady === true && (

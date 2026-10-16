@@ -1,0 +1,4 @@
+# Parakeet STT service. Its own venv (stt/.venv) — never share one with
+# tts/ or moshi/; a shared venv already took the voice down once.
+parakeet-mlx
+numpy

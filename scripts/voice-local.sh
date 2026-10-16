@@ -95,6 +95,22 @@ else
   printf "  \033[33m!\033[0m Kokoro not installed — see tts/README.md. Browser voice will be used.\n"
 fi
 
+step "Transcription (Parakeet STT)"
+if curl -sf http://127.0.0.1:8789/health >/dev/null 2>&1; then
+  ok "Parakeet already running"
+elif [ -x stt/.venv/bin/python ] && [ -f models/parakeet/.complete ]; then
+  nohup bash stt/run.sh >/dev/null 2>&1 &
+  if wait_for http://127.0.0.1:8789/health 90; then
+    ok "Parakeet started on the GPU (log: /tmp/stt.log)"
+  else
+    printf "  \033[33m!\033[0m Parakeet did not start — the browser recogniser will be used\n"
+  fi
+elif [ -x stt/.venv/bin/python ]; then
+  printf "  \033[33m!\033[0m Parakeet weights missing — run: npm run stt:fetch\n"
+else
+  printf "  \033[33m!\033[0m Parakeet not installed — see stt/requirements.txt. Browser recogniser will be used.\n"
+fi
+
 step "Starting the app"
 if curl -sf http://localhost:3100/voice >/dev/null 2>&1; then
   ok "already running on :3100"

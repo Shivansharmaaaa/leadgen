@@ -18,3 +18,4 @@ models/moshi/
 # Per-service virtualenvs — kept separate so one install cannot break another
 moshi/.venv/
 stt/.venv/
+models/parakeet/
