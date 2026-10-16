@@ -5,6 +5,7 @@ import { deliver } from "@/server/core/ingest";
 import { screenOutbound } from "@/server/core/guardrails";
 import { recordOutreachOutcome } from "@/server/learning/incrementality";
 import { requireOwner } from "@/server/auth/owner";
+import { eraseContact } from "@/server/features/erasure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,8 @@ type Action =
   | { action: "release"; conversationId: string }
   | { action: "reply"; conversationId: string; body: string }
   | { action: "approve_draft"; messageId: string; body?: string }
-  | { action: "discard_draft"; messageId: string };
+  | { action: "discard_draft"; messageId: string }
+  | { action: "erase_contact"; contactId: string };
 
 export async function POST(req: Request) {
   // The middleware guards this path; checked again here so the API that
@@ -50,6 +52,12 @@ export async function POST(req: Request) {
       return approveDraft(payload.messageId, payload.body);
     case "discard_draft":
       return discardDraft(payload.messageId);
+    case "erase_contact": {
+      // Scoped to the tenant that owns the contact; the report says what went.
+      const contact = await db.query.contacts.findFirst({ where: eq(contacts.id, payload.contactId) });
+      if (!contact) return NextResponse.json({ error: "no such contact" }, { status: 404 });
+      return NextResponse.json(await eraseContact(contact.tenantId, contact.id, "owner via inbox"));
+    }
     default:
       return NextResponse.json({ error: "unknown action" }, { status: 400 });
   }

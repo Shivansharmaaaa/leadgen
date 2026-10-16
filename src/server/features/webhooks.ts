@@ -28,7 +28,7 @@ import { db, contacts, jobs, tenants } from "@/server/db";
 
 export const WEBHOOK_EVENTS = [
   "lead.created", "lead.qualified", "appointment.booked", "appointment.confirmed",
-  "appointment.reschedule_requested", "conversation.escalated", "contact.opted_out",
+  "appointment.reschedule_requested", "conversation.escalated", "contact.opted_out", "contact.erased",
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 

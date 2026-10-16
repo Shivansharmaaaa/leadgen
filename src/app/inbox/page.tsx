@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getInbox } from "@/server/queries/dashboard";
-import { TakeoverButton, ReplyBox, HeldDraft } from "./ThreadControls";
+import { TakeoverButton, ReplyBox, HeldDraft, EraseButton } from "./ThreadControls";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +57,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               <TakeoverButton conversationId={conversation.id} aiPaused={conversation.aiPaused} />
               {contact?.smsConsent && <Badge tone="ok">SMS consent</Badge>}
               {contact?.doNotContact && <Badge tone="danger">do not contact</Badge>}
+              {contact && <EraseButton contactId={contact.id} name={contact.displayName ?? contact.primaryPhone ?? contact.primaryEmail ?? "this person"} />}
 
               <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted)" }}>
                 {conversation.lastMessageAt.toLocaleString("en-US", {

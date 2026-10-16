@@ -39,6 +39,33 @@ export function TakeoverButton({ conversationId, aiPaused }: {
   );
 }
 
+/** Erase on request (UK GDPR Art. 17): asks first, because it can't be undone. */
+export function EraseButton({ contactId, name }: { contactId: string; name: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  return (
+    <button
+      disabled={pending}
+      onClick={() => {
+        if (!window.confirm(
+          `Erase ${name}? Every message, call, lead and booking for them is deleted, and they ` +
+          `are kept on a do-not-contact list (as a one-way hash) so they're never contacted again. ` +
+          `This can't be undone.`)) return;
+        start(async () => {
+          await post({ action: "erase_contact", contactId });
+          router.refresh();
+        });
+      }}
+      style={{
+        fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "transparent",
+        color: "var(--danger)", border: "1px solid var(--danger)", opacity: pending ? 0.5 : 1,
+      }}
+    >
+      {pending ? "…" : "erase"}
+    </button>
+  );
+}
+
 export function ReplyBox({ conversationId }: { conversationId: string }) {
   const router = useRouter();
   const [value, setValue] = useState("");

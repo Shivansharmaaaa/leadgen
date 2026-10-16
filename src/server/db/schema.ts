@@ -387,6 +387,19 @@ export const jobs = pgTable("jobs", {
   uniqueIndex("jobs_idem_idx").on(t.idempotencyKey),
 ]);
 
+/**
+ * People who asked to be erased. Only a keyed hash of each phone and email
+ * is kept, so the business can still honour "never contact me" (a lawful
+ * reason to retain the minimum, per the ICO) without keeping who they were.
+ */
+export const suppressions = pgTable("suppressions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  identifierHash: text("identifier_hash").notNull(),
+  reason: text("reason").notNull().default("erasure"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("suppressions_tenant_hash_idx").on(t.tenantId, t.identifierHash)]);
+
 /** Raw webhook receipts, kept for replay and for proving idempotency. */
 export const webhookReceipts = pgTable("webhook_receipts", {
   id: uuid("id").primaryKey().defaultRandom(),

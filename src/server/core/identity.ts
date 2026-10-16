@@ -2,6 +2,7 @@ import { and, eq, or, isNotNull } from "drizzle-orm";
 import { db, contacts, contactIdentities, tenants } from "@/server/db";
 import type { Channel, ChannelIdentity } from "./types";
 import { normalizePhone, normalizeEmail } from "./phone";
+import { isSuppressed } from "./suppression";
 
 type Contact = typeof contacts.$inferSelect;
 
@@ -82,6 +83,9 @@ export async function resolveContact(
           displayName: identity.name ?? identity.handle ?? null,
           primaryPhone: phone,
           primaryEmail: email,
+          // Someone who had themselves erased comes back as do-not-contact:
+          // they can still be answered, but the business never starts it.
+          doNotContact: await isSuppressed(tenantId, [phone, email]),
         })
         .returning();
       contact = created;

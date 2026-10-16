@@ -32,6 +32,7 @@
     "auth:test": "tsx scripts/auth-test.ts",
     "settings:test": "tsx --env-file=.env scripts/settings-test.ts",
     "email:test": "tsx --env-file=.env scripts/email-test.ts",
+    "erasure:test": "tsx --env-file=.env scripts/erasure-test.ts",
     "imports:test": "tsx scripts/imports-test.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",
