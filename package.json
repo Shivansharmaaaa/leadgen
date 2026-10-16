@@ -31,7 +31,8 @@
     "twilio:verified": "tsx --env-file=.env scripts/check-verified.ts",
     "voice": "bash scripts/voice-local.sh",
     "voice:check": "tsx --env-file=.env scripts/voice-preflight.ts",
-    "finetune:data": "python3 finetune/fetch_sgd.py && tsx --env-file=.env scripts/finetune-export.ts && python3 finetune/build_dataset.py"
+    "finetune:data": "python3 finetune/fetch_sgd.py && tsx --env-file=.env scripts/finetune-export.ts && python3 finetune/build_dataset.py",
+    "tts": "bash tts/run.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.134.0",

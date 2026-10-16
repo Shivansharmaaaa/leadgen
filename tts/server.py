@@ -9,7 +9,7 @@ playing while the rest of the reply is still being generated.
 Standard library only on the serving side — this listens on localhost for one
 app, and a framework would be a dependency without a job.
 """
-import io, json, os, sys, time, warnings, wave
+import io, json, os, sys, threading, time, warnings, wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 warnings.filterwarnings("ignore")
@@ -30,8 +30,17 @@ list(PIPELINE("Ready.", voice=DEFAULT_VOICE))
 print(f"[tts] ready in {time.time() - _t:.1f}s on {device}", flush=True)
 
 
+# Metal command buffers cannot be driven from several threads at once: two
+# concurrent requests crashed the process with
+# "failed assertion _status < MTLCommandBufferStatusCommitted".
+# Requests stay concurrent at the socket; only the GPU section is serialised,
+# which costs nothing here because synthesis is ~200ms and single-user.
+_GPU_LOCK = threading.Lock()
+
+
 def synth(text: str, voice: str) -> bytes:
-    chunks = [c[2] for c in PIPELINE(text, voice=voice)]
+    with _GPU_LOCK:
+        chunks = [c[2] for c in PIPELINE(text, voice=voice)]
     if not chunks:
         return b""
     audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]

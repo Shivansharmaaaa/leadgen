@@ -17,6 +17,7 @@ export default function VoicePage() {
   const [interim, setInterim] = useState("");
   const [supported, setSupported] = useState(true);
   const [meta, setMeta] = useState<{ provider?: string; model?: string; productionGrade?: boolean }>({});
+  const [ttsReady, setTtsReady] = useState<boolean | null>(null);
 
   const recognitionRef = useRef<any>(null);
   const sessionIdRef = useRef<string>("");
@@ -39,19 +40,15 @@ export default function VoicePage() {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
   }, [turns, interim]);
 
-  const speak = useCallback((text: string) => {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    const voices = window.speechSynthesis.getVoices();
-    // Prefer a natural macOS voice when one is installed.
-    const preferred =
-      voices.find((v) => /Samantha|Ava|Allison|Serena|Daniel/i.test(v.name)) ??
-      voices.find((v) => v.lang.startsWith("en"));
-    if (preferred) u.voice = preferred;
-    u.rate = 1.05;
-    window.speechSynthesis.speak(u);
+  // A silent fallback to the browser voice is indistinguishable from "it just
+  // sounds bad", so say which voice is actually in use.
+  useEffect(() => {
+    fetch("/api/voice/tts")
+      .then((r) => r.json())
+      .then((d) => setTtsReady(Boolean(d?.ok)))
+      .catch(() => setTtsReady(false));
   }, []);
+
 
   /**
    * Speak sentences in order as they stream in. Queued rather than fired
@@ -262,6 +259,20 @@ export default function VoicePage() {
         <Banner tone="danger">
           This browser has no SpeechRecognition API. Use Chrome, or type below.
         </Banner>
+      )}
+      {ttsReady === false && (
+        <Banner tone="warn">
+          Kokoro voice service is not running — falling back to the browser&apos;s robotic
+          voice. Start it with <code>npm run tts</code>, then reload.
+        </Banner>
+      )}
+      {ttsReady === true && (
+        <div style={{
+          marginTop: 16, padding: "8px 14px", fontSize: 12, borderRadius: 10,
+          border: "1px solid var(--accent)", background: "var(--accent-dim)", color: "var(--accent)",
+        }}>
+          ♪ Kokoro voice active (Apple GPU)
+        </div>
       )}
       {meta.provider && !meta.productionGrade && (
         <Banner tone="warn">

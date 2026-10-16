@@ -78,6 +78,20 @@ ok "database ready, demo tenant seeded"
 step "Voice model check"
 npx tsx --env-file=.env scripts/voice-preflight.ts --model || die "voice model check failed"
 
+step "Voice (Kokoro TTS)"
+if curl -sf http://127.0.0.1:8787/health >/dev/null 2>&1; then
+  ok "Kokoro already running"
+elif [ -x tts/.venv/bin/python ]; then
+  nohup bash tts/run.sh >/dev/null 2>&1 &
+  if wait_for http://127.0.0.1:8787/health 60; then
+    ok "Kokoro started on the GPU (log: /tmp/tts.log)"
+  else
+    printf "  \033[33m!\033[0m Kokoro did not start — the browser voice will be used instead\n"
+  fi
+else
+  printf "  \033[33m!\033[0m Kokoro not installed — see tts/README.md. Browser voice will be used.\n"
+fi
+
 step "Starting the app"
 if curl -sf http://localhost:3100/voice >/dev/null 2>&1; then
   ok "already running on :3100"
