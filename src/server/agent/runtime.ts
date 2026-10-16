@@ -4,7 +4,7 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound, disclosureReply } from "@/server/core/guardrails";
+import { screenInbound, screenOutbound, disclosureReply, handoffReply, safetyReply } from "@/server/core/guardrails";
 import type { Channel } from "@/server/core/types";
 import { buildSystemPrompt } from "./prompt";
 import { recall } from "@/server/memory/store";
@@ -85,9 +85,11 @@ export async function runAgentTurn(opts: {
         reason: `${verdict.reason}: ${verdict.trigger}`,
         urgency: "now",
       });
+      // A fixed reply, safe to send as is. Returning none left a texter in
+      // silence with the AI paused; on a gas leak it must say what to do.
+      const businessName = tenant.settings?.businessName ?? tenant.name;
       const outcome: AgentOutcome = {
-        reply: null,
-        holdReason: `auto-escalated (${verdict.reason}: ${verdict.trigger})`,
+        reply: verdict.safety ? safetyReply(businessName) : handoffReply(businessName),
         escalated: true,
         toolCalls: [{ name: "escalate_to_human", input: verdict, output: { ok: true }, ms: 0 }],
         costUsd: 0,

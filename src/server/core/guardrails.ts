@@ -6,13 +6,54 @@ import type { TenantSettings } from "@/server/db/schema";
  * goes out (is this safe to say?).
  */
 
+/**
+ * Matched as whole words. As substrings, "sue" escalated every message
+ * containing "issue" — "I have an issue with my AC" went silent and paused
+ * the AI — and "hurt" fired on "it hurts my ears, the noise".
+ *
+ * Bare "emergency" is deliberately absent: "do you do emergency repairs?" is
+ * a sales question, and an urgent job is one to triage and book first, not to
+ * hand off (see the emergency_urgency eval). Hazards to life are listed
+ * explicitly and answered with SAFETY_REPLY.
+ */
 const DEFAULT_ESCALATION_TRIGGERS = [
-  "lawyer", "attorney", "solicitor", "sue", "lawsuit", "legal action",
+  "lawyer", "attorney", "solicitor", "sue", "suing", "lawsuit", "legal action",
   "refund", "chargeback", "dispute", "cancel my contract",
-  "injury", "injured", "hurt", "bleeding", "emergency", "gas leak", "carbon monoxide",
+  "injury", "injured", "hurt", "bleeding",
   "discrimination", "harassment", "complaint to", "ombudsman",
   "manager", "supervisor",
 ];
+
+/** Danger to life. Escalated, and the person is told what to do first. */
+const SAFETY_TRIGGERS = [
+  "gas leak", "leaking gas", "smell gas", "smells of gas", "smells like gas", "smelling gas", "gas smell",
+  "carbon monoxide", "co alarm", "co detector", "co monitor", "smoke coming", "on fire", "sparking", "sparks",
+];
+
+/** "Property manager" is a job title, not a demand for one. */
+const ROLE_BEFORE_MANAGER = /\b(?:property|building|site|project|office|account|store|branch|facilities|facility|estate|general|operations|case|my)\s+(?:manager|supervisor)\b/i;
+
+function containsPhrase(text: string, phrase: string): boolean {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+}
+
+/**
+ * What a person who smells gas or hears a CO alarm must hear first: the
+ * standard utility instruction. Not left to the model, and never replaced
+ * by "someone will call you back".
+ */
+export function safetyReply(businessName: string): string {
+  return "If you can smell gas or a carbon monoxide alarm is going off, please leave the house now " +
+    "with everyone in it, don't switch anything on or off, and once you're outside call 911 or " +
+    `your gas company. I'm alerting the ${businessName} team now and someone will call you straight back.`;
+}
+
+/** Sent whenever Gate 1 hands a conversation over, so nobody is left in silence. */
+export function handoffReply(businessName: string): string {
+  return `Thanks for telling me. I'm passing this to a member of the ${businessName} team, ` +
+    "who'll get back to you shortly.";
+}
 
 /**
  * Asking FOR a person is a handoff. Asking WHETHER this is a person is a
@@ -35,6 +76,8 @@ const ANGER_MARKERS = [
 
 export type InboundVerdict = {
   escalate: boolean;
+  /** Danger to life: reply with safetyReply() and alert the on-call team. */
+  safety?: boolean;
   /** Asked whether this is a person or a bot: answer with disclosureReply(). */
   disclose?: boolean;
   reason?: string;
@@ -64,13 +107,18 @@ export function disclosureReply(businessName: string): string {
 /** Gate 1 — decide whether the AI should answer this at all. */
 export function screenInbound(body: string, settings: TenantSettings): InboundVerdict {
   const text = body.toLowerCase();
+
+  for (const t of SAFETY_TRIGGERS) {
+    if (containsPhrase(text, t)) return { escalate: true, safety: true, reason: "safety", trigger: t };
+  }
+
   const triggers = [
     ...DEFAULT_ESCALATION_TRIGGERS,
     ...(settings.escalationTriggers ?? []).map((t) => t.toLowerCase()),
   ];
-
+  const withoutTitles = text.replace(ROLE_BEFORE_MANAGER, " ");
   for (const t of triggers) {
-    if (text.includes(t)) {
+    if (containsPhrase(withoutTitles, t)) {
       return { escalate: true, reason: "escalation_trigger", trigger: t };
     }
   }

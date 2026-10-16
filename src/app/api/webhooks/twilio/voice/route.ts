@@ -121,8 +121,13 @@ export async function POST(req: Request) {
 
   // Escalation or a held reply both mean: stop talking, get a human.
   if (outcome?.escalated || (outcome?.holdReason && !outcome.reply)) {
+    // An escalation carries a fixed reply (on a gas leak, what to do right
+    // now); speak it rather than a generic goodbye.
+    const goodbye = outcome?.escalated && outcome.reply
+      ? outcome.reply
+      : "Let me get a team member on this for you. Someone will call you right back.";
     return twiml(`
-      <Say voice="${VOICE}">${speak("Let me get a team member on this for you. Someone will call you right back.")}</Say>
+      <Say voice="${VOICE}">${speak(goodbye)}</Say>
       <Hangup/>
     `);
   }
