@@ -70,13 +70,17 @@ export class OllamaProvider implements LlmProvider {
     // Small models intermittently emit a tool call as literal JSON in the
     // message body instead of in tool_calls. Left alone the call silently
     // never runs and the raw JSON is shown to the customer. Salvage it.
-    if (toolCalls.length === 0) {
+    let kept = keepOffered(toolCalls, req.tools.map((t) => t.name));
+
+    if (kept.length === 0) {
       const salvaged = salvageTextToolCall(text, req.tools.map((t) => t.name));
       if (salvaged) {
-        toolCalls.push({ id: `ollama_salvaged_${Date.now()}`, ...salvaged.call });
+        kept = [{ id: `ollama_salvaged_${Date.now()}`, ...salvaged.call }];
         text = salvaged.remainingText;
       }
     }
+    toolCalls.length = 0;
+    toolCalls.push(...kept);
 
     return {
       text,
@@ -167,10 +171,13 @@ export class OllamaProvider implements LlmProvider {
       }
     }
 
-    if (toolCalls.length === 0) {
+    let kept = keepOffered(toolCalls, req.tools.map((t) => t.name));
+    if (kept.length === 0) {
       const salvaged = salvageTextToolCall(text, req.tools.map((t) => t.name));
-      if (salvaged) { toolCalls.push({ id: `ollama_salvaged_${Date.now()}`, ...salvaged.call }); }
+      if (salvaged) kept = [{ id: `ollama_salvaged_${Date.now()}`, ...salvaged.call }];
     }
+    toolCalls.length = 0;
+    toolCalls.push(...kept);
 
     return {
       text: text.trim(),
@@ -324,4 +331,22 @@ function extractJsonObjects(text: string): string[] {
     }
   }
   return out;
+}
+
+/**
+ * Drop tool calls for tools that were not offered on this request.
+ *
+ * Small models reach for tools they remember rather than tools they were
+ * given: with a three-tool request, llama3.2:3b still emitted
+ * `save_contact_detail`. Executing it anyway means running work the caller is
+ * waiting through, for a tool the caller's turn deliberately excluded —
+ * and it silently defeats any precondition gating upstream.
+ */
+function keepOffered(calls: LlmToolCall[], offered: string[]): LlmToolCall[] {
+  const allowed = new Set(offered);
+  return calls.filter((c) => {
+    if (allowed.has(c.name)) return true;
+    console.warn(`[ollama] dropped unoffered tool call "${c.name}"`);
+    return false;
+  });
 }

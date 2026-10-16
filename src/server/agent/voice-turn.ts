@@ -9,6 +9,7 @@ import { recall } from "@/server/memory/store";
 import { buildSystemPrompt } from "./prompt";
 import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
 import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
+import { qualifyFromTranscript } from "./post-turn";
 
 /**
  * Low-latency agent turn for spoken channels.
@@ -25,10 +26,42 @@ import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
  */
 
 /** Only the tools that can plausibly fire during a live call. */
+/**
+ * Only the tools whose RESULT the agent needs before it can speak.
+ *
+ * Measured: offering `qualify_lead` and `save_contact_detail` cost ~5s of
+ * silence per turn on llama3.2:3b, because the model spends one whole
+ * generation emitting tool calls and a second generating the reply — and it
+ * called `save_contact_detail` twice for a caller who had given neither a name
+ * nor a number. The caller hears none of this.
+ *
+ * Both are now handled off the critical path: identifiers are extracted
+ * deterministically on the way in (`core/extract.ts`), and qualification runs
+ * from the transcript after the turn (`post-turn.ts`).
+ */
 const VOICE_TOOL_NAMES = [
-  "check_availability", "book_appointment", "save_contact_detail",
-  "qualify_lead", "escalate_to_human",
+  "check_availability", "book_appointment", "escalate_to_human",
 ];
+
+/**
+ * Offer a tool only when it could actually succeed.
+ *
+ * A 3B model is loose about tool selection: on turn one, with no name, number
+ * or chosen slot, it still reached for `book_appointment` — a call that can
+ * only fail its own preconditions, after costing a full generation of silence.
+ * Hiding a tool until its preconditions hold is cheaper and more reliable than
+ * prompting the model not to use it.
+ */
+function toolsFor(args: {
+  hasName: boolean;
+  hasPhone: boolean;
+  offeredSlot: boolean;
+}): ToolSpec[] {
+  const allowed = new Set<string>(["check_availability", "escalate_to_human"]);
+  // Booking needs someone to book, and a time they picked.
+  if (args.hasName && args.hasPhone && args.offeredSlot) allowed.add("book_appointment");
+  return VOICE_TOOLS.filter((t) => allowed.has(t.name));
+}
 
 export const VOICE_TOOLS: ToolSpec[] = TOOL_DEFS
   .filter((t) => VOICE_TOOL_NAMES.includes(t.name))
@@ -112,6 +145,17 @@ export async function* runVoiceTurn(opts: {
     tenant, contactId: contact.id, conversationId: conversation.id, location,
   };
 
+  // Has a time already been put in front of this caller? Only then can they
+  // have chosen one.
+  const offeredSlot = ordered.some(
+    (m) => m.direction === "outbound" && /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i.test(m.body),
+  );
+  const activeTools = toolsFor({
+    hasName: Boolean(contact.displayName),
+    hasPhone: Boolean(contact.primaryPhone),
+    offeredSlot,
+  });
+
   // Gate 1 runs before any generation — an escalation must not wait on tokens.
   if (latestInbound) {
     const verdict = screenInbound(latestInbound.body, tenant.settings ?? {});
@@ -178,7 +222,7 @@ export async function* runVoiceTurn(opts: {
 
       if (!provider.stream) {
         // Provider cannot stream — fall back to one blocking call.
-        const turn = await provider.complete({ system, context, history: llmHistory, tools: VOICE_TOOLS });
+        const turn = await provider.complete({ system, context, history: llmHistory, tools: activeTools });
         turnText = turn.text;
         if (turn.text) {
           firstWordMs ??= Date.now() - started;
@@ -204,7 +248,7 @@ export async function* runVoiceTurn(opts: {
         continue;
       }
 
-      const iter = provider.stream({ system, context, history: llmHistory, tools: VOICE_TOOLS });
+      const iter = provider.stream({ system, context, history: llmHistory, tools: activeTools });
       let final: Awaited<ReturnType<typeof provider.complete>> | undefined;
 
       while (true) {
@@ -282,6 +326,9 @@ export async function* runVoiceTurn(opts: {
     costUsd: provider.costUsd({ inputTokens: totalIn, outputTokens: totalOut, cacheReadTokens: 0 }).toFixed(6),
     outcome: verdict.allow ? "replied" : "held",
   });
+
+  // Bookkeeping, after the caller has already been answered.
+  void qualifyFromTranscript(conversation.id).catch(() => {});
 
   yield {
     type: "done",
