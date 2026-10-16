@@ -1,6 +1,9 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP, type LookupFunction } from "node:net";
 import { eq } from "drizzle-orm";
 import { db, contacts, jobs, tenants } from "@/server/db";
 
@@ -90,22 +93,52 @@ export async function deliverWebhook(payload: Record<string, unknown>, tenantId:
 
   await assertPublicHttps(endpoint.url);
   const body = JSON.stringify(payload.event);
-  const res = await fetch(endpoint.url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "user-agent": "leadgen-webhooks/1",
-      "x-leadgen-event": String((payload.event as { type?: string })?.type ?? ""),
-      "x-leadgen-signature": sign(endpoint.secret, body),
-    },
-    body,
-    redirect: "manual", // a redirect could point anywhere, including inside
-    signal: AbortSignal.timeout(10_000),
+  const status = await postJson(endpoint.url, body, {
+    "user-agent": "leadgen-webhooks/1",
+    "x-leadgen-event": String((payload.event as { type?: string })?.type ?? ""),
+    "x-leadgen-signature": sign(endpoint.secret, body),
   });
-  if (res.status < 200 || res.status >= 300) {
-    throw new Error(`webhook ${endpoint.url} answered ${res.status}`);
+  if (status < 200 || status >= 300) {
+    throw new Error(`webhook ${endpoint.url} answered ${status}`);
   }
-  return { delivered: true, status: res.status };
+  return { delivered: true, status };
+}
+
+/**
+ * POST without following redirects, checking every address at connect time.
+ *
+ * assertPublicHttps checks the name when it is saved and before sending,
+ * but fetch then resolves it again on its own: a name that answers "public"
+ * to the check and 10.0.0.5 a moment later (DNS rebinding) would get
+ * through. Here the connection's own lookup refuses a private address, so
+ * what is checked is what is connected to.
+ */
+export function postJson(url: string, body: string, headers: Record<string, string>, timeoutMs = 10_000): Promise<number> {
+  const allowPrivate = process.env.WEBHOOKS_ALLOW_PRIVATE === "1";
+  const u = new URL(url);
+  const lookup: LookupFunction = (hostname, options, callback) => {
+    dnsLookup(hostname, { ...options, all: true }, (err, addresses) => {
+      if (err) return callback(err, "", 0);
+      const list = addresses as LookupAddress[];
+      const bad = list.find((a) => isPrivateAddress(a.address));
+      if (bad && !allowPrivate) return callback(new Error(`webhook host ${hostname} resolved to private ${bad.address}`), "", 0);
+      if ((options as { all?: boolean }).all) return (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, list);
+      callback(null, list[0].address, list[0].family);
+    });
+  };
+  const transport = u.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const req = transport(u, {
+      method: "POST", lookup, timeout: timeoutMs,
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), ...headers },
+    }, (res) => {
+      res.resume(); // drain; only the status matters, and redirects are never followed
+      resolve(res.statusCode ?? 0);
+    });
+    req.on("timeout", () => req.destroy(new Error(`webhook ${url} timed out`)));
+    req.on("error", reject);
+    req.end(body);
+  });
 }
 
 /**

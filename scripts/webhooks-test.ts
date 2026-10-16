@@ -5,7 +5,7 @@ import { db, tenants, locations, jobs } from "@/server/db";
 import { handleInbound } from "@/server/core/ingest";
 import { intakeLead } from "@/server/features/lead-intake";
 import {
-  assertPublicHttps, deliverWebhook, isPrivateAddress, publish, sign, verify,
+  assertPublicHttps, deliverWebhook, isPrivateAddress, postJson, publish, sign, verify,
 } from "@/server/features/webhooks";
 
 /**
@@ -123,6 +123,10 @@ async function main() {
     status = 200;
     delete process.env.WEBHOOKS_ALLOW_PRIVATE;
     check("without the test override, the local receiver is refused", Boolean(await rejects(deliverWebhook(job.payload, tenant.id))));
+    // Skip the up-front check entirely: the connection's own lookup must refuse
+    // a name that resolves to loopback (what DNS rebinding would exploit).
+    const rebind = await rejects(postJson(`http://localhost:${new URL(url).port}/hook`, "{}", {}));
+    check("the connect-time guard alone refuses a name resolving to loopback", rebind?.includes("private") === true, rebind ?? "connected!");
     await db.update(tenants).set({ settings: { businessName: "Webhook Test HVAC", webhooks: [] } }).where(eq(tenants.id, tenant.id));
     const gone = await deliverWebhook(job.payload, tenant.id);
     check("an endpoint removed since queueing is skipped", (gone as { skipped?: string }).skipped === "endpoint no longer configured");
