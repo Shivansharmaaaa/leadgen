@@ -1,0 +1,67 @@
+{
+  "args": {
+    "base": "data/finetune/base/llama3.2-1b",
+    "name": "sweep-lion-lr3e-5-lp1",
+    "optimizer": "lion",
+    "lr": 3e-05,
+    "rank": 16,
+    "alpha": 32,
+    "dropout": 0.05,
+    "targets": "all",
+    "rslora": false,
+    "dora": false,
+    "loraplus": 1.0,
+    "epochs": 1.0,
+    "max_steps": 4,
+    "max_minutes": 0,
+    "grad_accum": 2,
+    "clip": 1.0,
+    "warmup": 1,
+    "max_len": 4096,
+    "limit_train": 0,
+    "eval_rows": 8,
+    "eval_every": 4,
+    "seed": 0,
+    "device": "auto",
+    "no_grad_checkpoint": false,
+    "no_initial_eval": true,
+    "eval_only": false
+  },
+  "steps": [
+    {
+      "step": 1,
+      "loss": 1.2617042660713196,
+      "grad_norm": 3.8748748302459717,
+      "lr": 3e-05,
+      "elapsed_s": 93.65154695510864
+    },
+    {
+      "step": 2,
+      "loss": 1.4953473210334778,
+      "grad_norm": 3.694474220275879,
+      "lr": 3e-05,
+      "elapsed_s": 189.51036405563354
+    },
+    {
+      "step": 3,
+      "loss": 1.654348373413086,
+      "grad_norm": 4.91847562789917,
+      "lr": 2.3250000000000003e-05,
+      "elapsed_s": 278.45966839790344
+    },
+    {
+      "step": 4,
+      "loss": 1.402487337589264,
+      "grad_norm": 3.3751842975616455,
+      "lr": 9.750000000000003e-06,
+      "elapsed_s": 351.9277243614197
+    }
+  ],
+  "evals": [
+    {
+      "step": 4,
+      "valid_loss": 1.2178652491420507,
+      "elapsed_s": 351.9277243614197
+    }
+  ]
+}

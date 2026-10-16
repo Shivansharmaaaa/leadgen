@@ -1,10 +1,10 @@
-import { and, eq, gte, lte, desc } from "drizzle-orm";
+import { and, eq, gte, lte, desc, sql } from "drizzle-orm";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { addDays, addMinutes, startOfDay, isBefore, isAfter } from "date-fns";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
-  db, appointments, leads, contacts, conversations, events, locations,
-  type tenants, type BusinessHours,
+  db, appointments, leads, contacts, conversations, events, locations, agentRuns,
+  type tenants, type BusinessHours, type ToolCallRecord,
 } from "@/server/db";
 import { linkIdentifierToContact } from "@/server/core/identity";
 import { searchKnowledge } from "@/server/core/knowledge";
@@ -176,6 +176,22 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
     strict: true,
   },
 ];
+
+/**
+ * Has the calendar been asked at any point in this conversation? Gate 2 holds
+ * a reply that offers times when it has not, since those times are invented.
+ */
+export async function availabilityChecked(conversationId: string, thisTurn: ToolCallRecord[]): Promise<boolean> {
+  if (thisTurn.some((t) => t.name === "check_availability")) return true;
+  const earlier = await db.query.agentRuns.findFirst({
+    columns: { id: true },
+    where: and(
+      eq(agentRuns.conversationId, conversationId),
+      sql`${agentRuns.toolCalls} @> '[{"name":"check_availability"}]'::jsonb`,
+    ),
+  });
+  return Boolean(earlier);
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Executors

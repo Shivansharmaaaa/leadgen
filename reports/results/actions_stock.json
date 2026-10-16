@@ -1,0 +1,103 @@
+{
+  "model": "llama3.2:3b",
+  "mode": "chat",
+  "tag": "final",
+  "per_kind": 2,
+  "stats": {
+    "sgd:booking_failed": {
+      "n": 2,
+      "action": 2,
+      "args": 2
+    },
+    "hvac:escalate": {
+      "n": 2,
+      "action": 0,
+      "args": 0
+    },
+    "hvac:qualify_first": {
+      "n": 2,
+      "action": 0,
+      "args": 0
+    },
+    "hvac:save_details_not_book": {
+      "n": 2,
+      "action": 0,
+      "args": 0,
+      "premature": 2
+    },
+    "hvac:ai_disclosure": {
+      "n": 2,
+      "action": 0,
+      "args": 0
+    },
+    "hvac:check_before_offer": {
+      "n": 2,
+      "action": 1,
+      "args": 1
+    },
+    "hvac:ask_which_time": {
+      "n": 2,
+      "action": 2,
+      "args": 2,
+      "premature": 0
+    },
+    "hvac:unknown_price": {
+      "n": 2,
+      "action": 0,
+      "args": 0
+    },
+    "hvac:confirm_booked": {
+      "n": 2,
+      "action": 2,
+      "args": 2
+    },
+    "hvac:acknowledge_own_details": {
+      "n": 2,
+      "action": 2,
+      "args": 2
+    },
+    "hvac:book_after_choice": {
+      "n": 2,
+      "action": 2,
+      "args": 0
+    },
+    "hvac:offer_two_times": {
+      "n": 2,
+      "action": 2,
+      "args": 2,
+      "premature": 0
+    },
+    "sgd:book_after_yes": {
+      "n": 2,
+      "action": 2,
+      "args": 0
+    },
+    "sgd:check_before_readback": {
+      "n": 2,
+      "action": 1,
+      "args": 1
+    },
+    "sgd:reply": {
+      "n": 2,
+      "action": 0,
+      "args": 0
+    },
+    "sgd:readback_no_booking": {
+      "n": 2,
+      "action": 2,
+      "args": 2,
+      "premature": 0
+    },
+    "sgd:after_booking": {
+      "n": 2,
+      "action": 2,
+      "args": 2
+    }
+  },
+  "total": {
+    "n": 34,
+    "action": 20,
+    "args": 16,
+    "premature": 2
+  }
+}

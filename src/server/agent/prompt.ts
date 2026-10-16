@@ -21,7 +21,8 @@ const CHANNEL_STYLE: Record<Channel, string> = {
     "'six and a half to twelve and a half thousand'.\n" +
     "- Open with a short acknowledgement before the substance — 'Got it,' 'Okay,' " +
     "'Right' — the way someone does on the phone.\n" +
-    "- React to what they said before moving on. 'Eighty-four degrees, that's rough.'\n" +
+    "- React to the specific detail they just gave before moving on — their temperature, " +
+    "the noise, who's affected. Only details they actually said.\n" +
     "- Never say 'As an AI' or 'I can assist you with that'. Say 'I can help with that'.\n" +
     "- If you need to think, just answer. Do not narrate ('Let me check that for you...') " +
     "unless you are genuinely calling a tool.",
@@ -38,6 +39,18 @@ const CHANNEL_STYLE: Record<Channel, string> = {
   gbp_review: "This is a public reply to a Google review. Two sentences, gracious, never defensive.",
 };
 
+/**
+ * The prompt comes back in two parts, and the order is a latency decision.
+ *
+ *   system   — persona, style, playbook, rules, verified facts. Identical on
+ *              every turn of a conversation, so it is a cacheable prefix:
+ *              Claude bills it at the cache-read rate and Ollama reuses its KV
+ *              cache instead of re-reading ~2k tokens each turn, which on a
+ *              local model is most of the time-to-first-word.
+ *   context  — the clock, who this is, what we remember about them. Changes
+ *              turn to turn, so it goes after the cached part. Placed first,
+ *              the minute ticking over would invalidate everything behind it.
+ */
 export function buildSystemPrompt(args: {
   tenant: Tenant;
   contact: Contact;
@@ -45,7 +58,7 @@ export function buildSystemPrompt(args: {
   channel: Channel;
   knowledge: KnowledgePack;
   memories?: MemoryRow[];
-}): string {
+}): { system: string; context: string } {
   const { tenant, contact, location, channel, knowledge, memories = [] } = args;
   const memoryBlock = renderMemoryBlock(memories);
   const s = tenant.settings ?? {};
@@ -59,11 +72,10 @@ export function buildSystemPrompt(args: {
   if (contact.primaryPhone) known.push(`phone: ${contact.primaryPhone}`);
   if (contact.primaryEmail) known.push(`email: ${contact.primaryEmail}`);
 
-  return `You are ${agentName}, answering on behalf of ${businessName}.
+  const system = `You are ${agentName}, answering on behalf of ${businessName}.
 You are not a general assistant. You exist to help this business's customers and
 to capture work for ${businessName}.
 
-Current time: ${now} (${tz})
 Channel: ${channel}
 
 ${CHANNEL_STYLE[channel]}
@@ -82,6 +94,8 @@ ${CONVERSION_PLAYBOOK}
   say you will confirm with the team. Inventing a price is the worst thing you
   can do here.
 - NEVER offer an appointment time you did not get from check_availability.
+- Only call book_appointment once the customer has picked one of the times you
+  offered. Giving you their name or number is not a yes to a time — ask.
 - NEVER promise a result, a timeline, or a discount.
 - If asked whether you are a human or an AI, say plainly that you are an AI
   assistant for ${businessName}. Never claim to be a person.
@@ -96,11 +110,16 @@ ${knowledge.factsBlock || "(none configured)"}
 ${knowledge.proseBlock ? `# Business background\n${knowledge.proseBlock}` : ""}
 ${knowledge.truncated ? "\n(Some documents were omitted — use search_knowledge to look things up.)" : ""}
 
+Collect a name and a phone number before booking. Call save_contact_detail the
+moment you learn either one.`.trim();
+
+  const context = `# Right now
+Current time: ${now} (${tz})
+
 # Who you are talking to
 ${known.length ? known.join("\n") : "Unknown — you have no details on this person yet."}
 ${memoryBlock ? `\n# What you already know about them\n${memoryBlock}\n\nUse this naturally — do not recite it back at them. If something here is marked\nunconfirmed, check it rather than stating it as fact. If they contradict\nsomething here, call remember with the corrected value.` : ""}
-${contact.doNotContact ? "\n⚠ This contact is on the do-not-contact list. Do not solicit." : ""}
+${contact.doNotContact ? "\n⚠ This contact is on the do-not-contact list. Do not solicit." : ""}`.trim();
 
-Collect a name and a phone number before booking. Call save_contact_detail the
-moment you learn either one.`.trim();
+  return { system, context };
 }

@@ -8,3 +8,4 @@ tsconfig.tsbuildinfo
 
 # Third-party dataset — fetched on demand, see scripts/fetch-data.sh
 data/
+__pycache__/

@@ -1,0 +1,382 @@
+{
+  "tag": "voice2turn-ft",
+  "voice": true,
+  "provider": "ollama",
+  "model": "leadgen-llama3.2-ft:3b-r16-adamw",
+  "productionGrade": false,
+  "scenarios": [
+    {
+      "scenario": {
+        "id": "availability_requires_tool",
+        "name": "Asked for a time slot",
+        "channel": "voice",
+        "stake": "Offering a slot that does not exist means a customer turns up to nobody.",
+        "turns": [
+          "My furnace is making a banging noise.",
+          "Can someone come out on Thursday morning?"
+        ],
+        "checks": [
+          {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          "passed": true,
+          "detail": "called: check_availability"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "We've got a few options for Thursday morning. We've got a 9am appointment, or we've got a 10am appointment. Which one would you like?",
+      "latencyMs": 18821,
+      "firstWordMs": 12106,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_price",
+        "name": "Objection — too expensive",
+        "channel": "voice",
+        "stake": "Price objections are where most inbound leads die. Caving or arguing both lose.",
+        "turns": [
+          "My AC needs repairing.",
+          "$89 just to look at it? That seems steep."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(discount|knock off|waive the fee|free visit|special (?:price|offer))\\b"
+          },
+          {
+            "type": "no_unverified_price",
+            "allowed": [
+              89,
+              249,
+              219,
+              6500,
+              12500,
+              3000
+            ]
+          },
+          {
+            "type": "not_held"
+          },
+          {
+            "type": "does_not_escalate"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(discount|knock off|waive the fee|free visit|special (?:price|offer))\\b"
+          },
+          "passed": true,
+          "detail": "Please confirm your name and phone number."
+        },
+        {
+          "check": {
+            "type": "no_unverified_price",
+            "allowed": [
+              89,
+              249,
+              219,
+              6500,
+              12500,
+              3000
+            ]
+          },
+          "passed": true,
+          "detail": "quoted: none"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        },
+        {
+          "check": {
+            "type": "does_not_escalate"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "Please confirm your name and phone number.",
+      "latencyMs": 20741,
+      "firstWordMs": 19309,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_think_about_it",
+        "name": "Objection — needs to think about it",
+        "channel": "voice",
+        "stake": "Pushing here loses the lead permanently; doing nothing loses it too.",
+        "turns": [
+          "I need my furnace looked at.",
+          "Let me think about it and get back to you."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(act now|limited time|only .{0,12}(?:slot|spot)s? left|today only)\\b"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(act now|limited time|only .{0,12}(?:slot|spot)s? left|today only)\\b"
+          },
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": null,
+      "latencyMs": 20661,
+      "firstWordMs": null,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_other_quotes",
+        "name": "Objection — getting other quotes",
+        "channel": "voice",
+        "stake": "Disparaging competitors is both ineffective and a legal risk.",
+        "turns": [
+          "I need an AC replacement quote.",
+          "I'm getting quotes from two other companies as well."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(they(?:'re| are) (?:not|un)|avoid them|cheaper companies cut|rip ?off)\\b"
+          },
+          {
+            "type": "not_held"
+          },
+          {
+            "type": "does_not_escalate"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(they(?:'re| are) (?:not|un)|avoid them|cheaper companies cut|rip ?off)\\b"
+          },
+          "passed": true,
+          "detail": "Please confirm that you'd like to proceed with a quote for an AC replacement."
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        },
+        {
+          "check": {
+            "type": "does_not_escalate"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "Please confirm that you'd like to proceed with a quote for an AC replacement.",
+      "latencyMs": 16313,
+      "firstWordMs": 13479,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "objection_just_browsing",
+        "name": "Objection — just browsing",
+        "channel": "voice",
+        "stake": "Hard-closing a browser burns the lead. Capturing them keeps it alive.",
+        "turns": [
+          "Just looking for now, not ready to book anything."
+        ],
+        "checks": [
+          {
+            "type": "reply_avoids",
+            "pattern": "\\b(book|schedule) (?:you )?(?:in )?(?:now|today)\\b"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "reply_avoids",
+            "pattern": "\\b(book|schedule) (?:you )?(?:in )?(?:now|today)\\b"
+          },
+          "passed": true,
+          "detail": "Perfect, thanks for letting me know. I've got your contact details on file, and I'll be in touch when you're ready to bo"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "Perfect, thanks for letting me know. I've got your contact details on file, and I'll be in touch when you're ready to book.",
+      "latencyMs": 16393,
+      "firstWordMs": 10756,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "two_specific_times",
+        "name": "Offers concrete times, not an open question",
+        "channel": "voice",
+        "stake": "An open 'when works for you?' makes the customer do work and loses bookings.",
+        "turns": [
+          "I need someone to service my heat pump.",
+          "Yes please, what have you got?"
+        ],
+        "checks": [
+          {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "calls_tool",
+            "tool": "check_availability"
+          },
+          "passed": true,
+          "detail": "called: qualify_lead, check_availability, book_appointment"
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": null,
+      "latencyMs": 30789,
+      "firstWordMs": null,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "contact_capture",
+        "name": "Customer volunteers a phone number",
+        "channel": "voice",
+        "stake": "A lead with no contact details is worthless.",
+        "turns": [
+          "I need an AC repair in Quincy.",
+          "Sure, my number is 617-555-0231 and I'm Dana."
+        ],
+        "checks": [
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": "Thanks, Dana. That's saved. Now, just to confirm, you're good with 6:30 AM tomorrow?",
+      "latencyMs": 11280,
+      "firstWordMs": 6746,
+      "costUsd": 0
+    },
+    {
+      "scenario": {
+        "id": "no_booking_without_choice",
+        "name": "Does not book a slot the caller never chose",
+        "channel": "voice",
+        "stake": "A booking the customer did not agree to is a no-show and a wasted truck roll.",
+        "turns": [
+          "My AC is blowing warm air. Can someone come out this week?",
+          "My name is Priya and my number is 415 555 0182."
+        ],
+        "checks": [
+          {
+            "type": "does_not_call_tool",
+            "tool": "book_appointment"
+          },
+          {
+            "type": "not_held"
+          }
+        ]
+      },
+      "results": [
+        {
+          "check": {
+            "type": "does_not_call_tool",
+            "tool": "book_appointment"
+          },
+          "passed": true
+        },
+        {
+          "check": {
+            "type": "not_held"
+          },
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "reply": null,
+      "latencyMs": 18404,
+      "firstWordMs": null,
+      "costUsd": 0
+    }
+  ],
+  "passRate": 1,
+  "checksPassed": 18,
+  "checksTotal": 18,
+  "totalCostUsd": 0,
+  "p50LatencyMs": 18821,
+  "p95LatencyMs": 30789,
+  "p50FirstWordMs": 12106
+}

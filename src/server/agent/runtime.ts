@@ -4,11 +4,11 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound } from "@/server/core/guardrails";
+import { screenInbound, screenOutbound, disclosureReply } from "@/server/core/guardrails";
 import type { Channel } from "@/server/core/types";
 import { buildSystemPrompt } from "./prompt";
 import { recall } from "@/server/memory/store";
-import { TOOL_DEFS, executeTool, type AgentContext } from "./tools";
+import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
 import { getProvider, type LlmHistory, type ToolSpec, LlmError } from "./providers";
 
 const MAX_TOOL_ITERATIONS = 6;
@@ -101,13 +101,32 @@ export async function runAgentTurn(opts: {
       }, "escalated");
       return outcome;
     }
+
+    // Asked whether this is a person: a truthful answer is a legal
+    // requirement, so it does not depend on what the model would say.
+    if (verdict.disclose) {
+      const outcome: AgentOutcome = {
+        reply: disclosureReply(tenant.settings?.businessName ?? tenant.name),
+        escalated: false,
+        toolCalls: [],
+        costUsd: 0,
+        latencyMs: Date.now() - started,
+        provider: provider.id,
+        model: provider.model,
+        productionGrade: provider.productionGrade,
+      };
+      await persistRun(tenant.id, conversation.id, opts.inboundMessageId, outcome, {
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
+      }, "replied");
+      return outcome;
+    }
   }
 
   const [knowledge, memories] = await Promise.all([
     loadKnowledge(tenant.id),
     recall(contact.id),
   ]);
-  const system = buildSystemPrompt({
+  const { system, context } = buildSystemPrompt({
     tenant, contact, location,
     channel: conversation.channel as Channel,
     knowledge,
@@ -134,7 +153,7 @@ export async function runAgentTurn(opts: {
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const turn = await provider.complete({ system, history: llmHistory, tools: toolSpecs });
+      const turn = await provider.complete({ system, context, history: llmHistory, tools: toolSpecs });
       totalIn += turn.usage.inputTokens;
       totalOut += turn.usage.outputTokens;
       totalCacheRead += turn.usage.cacheReadTokens;
@@ -206,7 +225,9 @@ export async function runAgentTurn(opts: {
   // Gate 2: is the draft safe to send?
   let holdReason: string | undefined;
   if (finalText) {
-    const verdict = screenOutbound(finalText, tenant.settings ?? {});
+    const verdict = screenOutbound(finalText, tenant.settings ?? {}, {
+      availabilityChecked: await availabilityChecked(conversation.id, toolRecords),
+    });
     if (!verdict.allow) {
       holdReason = `guardrail: ${verdict.holdReason}`;
       toolRecords.push({

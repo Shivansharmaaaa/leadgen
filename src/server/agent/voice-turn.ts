@@ -4,10 +4,10 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound } from "@/server/core/guardrails";
+import { screenInbound, screenOutbound, disclosureReply } from "@/server/core/guardrails";
 import { recall } from "@/server/memory/store";
 import { buildSystemPrompt } from "./prompt";
-import { TOOL_DEFS, executeTool, type AgentContext } from "./tools";
+import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
 import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 
 /**
@@ -30,7 +30,7 @@ const VOICE_TOOL_NAMES = [
   "qualify_lead", "escalate_to_human",
 ];
 
-const VOICE_TOOLS: ToolSpec[] = TOOL_DEFS
+export const VOICE_TOOLS: ToolSpec[] = TOOL_DEFS
   .filter((t) => VOICE_TOOL_NAMES.includes(t.name))
   .map((t) => ({
     name: t.name,
@@ -126,6 +126,28 @@ export async function* runVoiceTurn(opts: {
       };
       return;
     }
+
+    // Asked whether this is a person: answered truthfully without the model.
+    if (verdict.disclose) {
+      const text = disclosureReply(tenant.settings?.businessName ?? tenant.name);
+      yield { type: "sentence", text, msSinceStart: Date.now() - started };
+      await db.insert(messagesTable).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        direction: "outbound", channel: "voice", authorType: "ai", body: text, status: "sent",
+      });
+      await db.insert(agentRuns).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        inboundMessageId: opts.inboundMessageId ?? null,
+        model: "guardrail:disclosure", toolCalls: [],
+        inputTokens: 0, outputTokens: 0, cacheReadTokens: 0,
+        latencyMs: Date.now() - started, costUsd: "0", outcome: "replied",
+      });
+      yield {
+        type: "done", fullText: text, latencyMs: Date.now() - started,
+        firstWordMs: Date.now() - started, provider: "guardrail", model: "disclosure",
+      };
+      return;
+    }
   }
 
   const [knowledge, memories] = await Promise.all([
@@ -133,7 +155,7 @@ export async function* runVoiceTurn(opts: {
     recall(contact.id, 10),
   ]);
 
-  const system = buildSystemPrompt({
+  const { system, context } = buildSystemPrompt({
     tenant, contact, location, channel: "voice", knowledge, memories,
   });
 
@@ -156,7 +178,7 @@ export async function* runVoiceTurn(opts: {
 
       if (!provider.stream) {
         // Provider cannot stream — fall back to one blocking call.
-        const turn = await provider.complete({ system, history: llmHistory, tools: VOICE_TOOLS });
+        const turn = await provider.complete({ system, context, history: llmHistory, tools: VOICE_TOOLS });
         turnText = turn.text;
         if (turn.text) {
           firstWordMs ??= Date.now() - started;
@@ -182,30 +204,36 @@ export async function* runVoiceTurn(opts: {
         continue;
       }
 
-      const iter = provider.stream({ system, history: llmHistory, tools: VOICE_TOOLS });
+      const iter = provider.stream({ system, context, history: llmHistory, tools: VOICE_TOOLS });
       let final: Awaited<ReturnType<typeof provider.complete>> | undefined;
 
       while (true) {
         const step = await iter.next();
         if (step.done) { final = step.value; break; }
-        firstWordMs ??= Date.now() - started;
         turnText += step.value;
+        // A small model sometimes types its tool call as JSON instead of
+        // making it. Never speak that; the provider salvages it into a real
+        // call when the stream ends.
+        if (/^\s*\{/.test(turnText)) continue;
+        firstWordMs ??= Date.now() - started;
         for (const s of sentencer.push(step.value)) {
           yield { type: "sentence", text: s, msSinceStart: Date.now() - started };
         }
       }
 
-      const rest = sentencer.flush();
+      const typedToolCall = /^\s*\{/.test(turnText);
+      const rest = typedToolCall ? null : sentencer.flush();
       if (rest) yield { type: "sentence", text: rest, msSinceStart: Date.now() - started };
+      const spoken = typedToolCall ? "" : turnText;
 
       totalIn += final?.usage.inputTokens ?? 0;
       totalOut += final?.usage.outputTokens ?? 0;
-      fullText += turnText;
+      fullText += spoken;
 
       const calls = final?.toolCalls ?? [];
       if (calls.length === 0) break;
 
-      llmHistory.push({ role: "assistant", content: turnText, toolCalls: calls });
+      llmHistory.push({ role: "assistant", content: spoken, toolCalls: calls });
       for (const call of calls) {
         const t0 = Date.now();
         const result = await executeTool(ctx, call.name, call.input).catch((e) => ({ ok: false, error: String(e) }));
@@ -226,7 +254,9 @@ export async function* runVoiceTurn(opts: {
   // Gate 2. Already spoken, so this records the violation for review rather
   // than blocking — the tradeoff streaming forces, and the reason the price
   // guard also lives in the prompt as a hard rule.
-  const verdict = screenOutbound(fullText, tenant.settings ?? {});
+  const verdict = screenOutbound(fullText, tenant.settings ?? {}, {
+    availabilityChecked: await availabilityChecked(conversation.id, toolRecords),
+  });
   if (!verdict.allow) {
     toolRecords.push({ name: "__guardrail", input: { text: fullText }, output: verdict, ms: 0, blocked: verdict.holdReason });
     yield { type: "held", reason: verdict.holdReason ?? "guardrail" };

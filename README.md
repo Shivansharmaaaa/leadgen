@@ -53,6 +53,25 @@ npm run smoke
 handed over mid-thread, a redelivered webhook, the same person phoning in, a
 price question, and a legal escalation.
 
+### Talking to it
+
+```bash
+npm run voice
+```
+
+Checks Ollama, pulls `llama3.2:3b` if it is missing (the voice model), also
+builds the faster cache-friendly variant from `models/leadgen-llama3.2.Modelfile`,
+confirms the model makes real tool calls and runs on the GPU, brings up
+Postgres, seeds the demo tenant only if it is not there, and opens `/voice`.
+`finetune/README.md` has the measured trade-off between the two and how a
+LoRA fine-tune gets the speed without losing tool use. Use Chrome: the page uses its speech recognition.
+On Apple Silicon Ollama runs on the GPU (Metal) by itself.
+`npm run voice:check` re-runs just the model and database checks.
+
+What changed in the voice agent and the local model, with every measurement:
+[`CHANGES_REPORT.md`](CHANGES_REPORT.md). A fine-tuned voice adapter (built
+with Llama) is in [`models/Llama-3.2-3B-Leadgen-Voice-LoRA`](models/Llama-3.2-3B-Leadgen-Voice-LoRA/).
+
 ## Switching to production quality
 
 The local 8B model proves the plumbing but is not representative of reply
@@ -76,6 +95,9 @@ ANTHROPIC_API_KEY=sk-ant-...   # or: LLM_PROVIDER=anthropic
 | `npm run uplift:test` | Prove uplift ranking beats conversion ranking |
 | `npm run worker` | Drain the job queue (follow-ups, reviews, training) |
 | `npm run dev` | App on :3100 — `/voice` to talk to the agent |
+| `npm run voice` | Check the local model + database, start the app, open `/voice` |
+| `npm run eval -- --voice` | Every scenario as a phone call, through the streaming voice path |
+| `npm run finetune:data` | Build the LoRA set (SGD + in-domain); see `finetune/README.md` |
 
 ## Status
 

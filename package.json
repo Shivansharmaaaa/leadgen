@@ -28,7 +28,10 @@
     "call:me": "tsx --env-file=.env scripts/call-me.ts",
     "twilio:numbers": "tsx --env-file=.env scripts/find-number.ts",
     "twilio:provision": "tsx --env-file=.env scripts/provision-number.ts",
-    "twilio:verified": "tsx --env-file=.env scripts/check-verified.ts"
+    "twilio:verified": "tsx --env-file=.env scripts/check-verified.ts",
+    "voice": "bash scripts/voice-local.sh",
+    "voice:check": "tsx --env-file=.env scripts/voice-preflight.ts",
+    "finetune:data": "python3 finetune/fetch_sgd.py && tsx --env-file=.env scripts/finetune-export.ts && python3 finetune/build_dataset.py"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.134.0",
