@@ -252,6 +252,10 @@ export const appointments = pgTable("appointments", {
   status: apptStatusEnum("status").notNull().default("confirmed"),
   notes: text("notes"),
   externalCalendarId: text("external_calendar_id"),
+  /** The customer replied to a reminder to confirm. */
+  customerConfirmedAt: timestamp("customer_confirmed_at", { withTimezone: true }),
+  /** The customer asked to move it; a person finds the new time. */
+  rescheduleRequestedAt: timestamp("reschedule_requested_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("appointments_tenant_idx").on(t.tenantId, t.startsAt)]);
 

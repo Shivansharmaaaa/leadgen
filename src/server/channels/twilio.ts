@@ -41,6 +41,12 @@ export const smsAdapter: ChannelAdapter = {
     // this gate exists for business-initiated sends.
     if (!initiated) return { ok: true };
 
+    // A reminder about a booking they made needs only the number they gave,
+    // but never overrides a STOP.
+    if (msg.meta?.transactional === true) {
+      return contact.doNotContact ? { ok: false, reason: "contact is on do-not-contact" } : { ok: true };
+    }
+
     return canInitiateOutbound("sms", contact);
   },
 

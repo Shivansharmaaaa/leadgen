@@ -24,6 +24,7 @@
     "feature:test": "tsx --env-file=.env scripts/feature-test.ts",
     "fed:test": "tsx --env-file=.env scripts/federated-test.ts",
     "intake:test": "tsx --env-file=.env scripts/intake-test.ts",
+    "reminders:test": "tsx --env-file=.env scripts/reminders-test.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",
     "call:me": "tsx --env-file=.env scripts/call-me.ts",

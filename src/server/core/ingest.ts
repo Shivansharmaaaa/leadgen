@@ -7,6 +7,7 @@ import type { InboundMessage, Channel } from "./types";
 import { resolveContact, linkIdentifierToContact } from "./identity";
 import { extractIdentifiers } from "./extract";
 import { detectConsentKeyword, optInConfirmation, optOutConfirmation } from "./opt-out";
+import { handleReminderReply } from "@/server/features/reminders";
 import { extractMemories } from "@/server/memory/extract";
 import { runAgentTurn, type AgentOutcome } from "@/server/agent/runtime";
 import { getAdapter } from "@/server/channels/registry";
@@ -156,6 +157,28 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
     return { conversationId: conversation.id, contactId: contact.id, messageId: stored.id, duplicate: false, outcome, sent };
   }
 
+  // 4d. An answer to a reminder ("C", "R"), only when the last thing we sent
+  //     in this thread was that reminder. Bookkeeping, so it applies even
+  //     when a person has taken the thread over.
+  const reminderReply = await handleReminderReply({
+    tenantId: msg.tenantId, conversationId: conversation.id, body: msg.body,
+  });
+  if (reminderReply) {
+    const sent = await deliver({
+      tenantId: msg.tenantId,
+      conversationId: conversation.id,
+      channel: msg.channel,
+      to: msg.from,
+      body: reminderReply.reply,
+      meta: { reminderAnswer: reminderReply.action, appointmentId: reminderReply.appointmentId },
+    });
+    const outcome: AgentOutcome = {
+      reply: reminderReply.reply, escalated: reminderReply.action === "reschedule", toolCalls: [],
+      costUsd: 0, latencyMs: 0, provider: "rule", model: "reminder-reply", productionGrade: true,
+    };
+    return { conversationId: conversation.id, contactId: contact.id, messageId: stored.id, duplicate: false, outcome, sent };
+  }
+
   // 5. A human has taken this thread — stay out of it.
   if (conversation.aiPaused) {
     return {
@@ -234,8 +257,17 @@ export async function deliver(args: {
    * ran, so every send was treated as a service reply.
    */
   initiated?: boolean;
+  /**
+   * Information about something the person already arranged (a booking
+   * reminder), as opposed to marketing. Needs no marketing consent, but still
+   * never goes to someone on do-not-contact.
+   */
+  transactional?: boolean;
+  /** Stored on the message row, e.g. which appointment a reminder was for. */
+  meta?: Record<string, unknown>;
 }): Promise<boolean> {
   const adapter = getAdapter(args.channel);
+  const rowMeta = args.meta ?? {};
 
   if (!adapter) {
     await db.insert(messagesTable).values({
@@ -247,6 +279,7 @@ export async function deliver(args: {
       body: args.body,
       status: "failed",
       error: `no adapter registered for ${args.channel}`,
+      meta: rowMeta,
     });
     return false;
   }
@@ -257,7 +290,7 @@ export async function deliver(args: {
     channel: args.channel,
     to: args.to,
     body: truncate(args.body, adapter.maxLength),
-    meta: { initiated: args.initiated === true },
+    meta: { initiated: args.initiated === true, transactional: args.transactional === true },
   };
 
   if (adapter.canSend) {
@@ -271,7 +304,7 @@ export async function deliver(args: {
         authorType: args.authorType ?? "ai",
         body: outbound.body,
         status: "held_for_review",
-        meta: { holdReason: gate.reason },
+        meta: { ...rowMeta, holdReason: gate.reason },
       });
       return false;
     }
@@ -290,6 +323,7 @@ export async function deliver(args: {
     externalId: result.externalId ?? null,
     status: result.status === "sent" ? "sent" : "failed",
     error: result.error ?? null,
+    meta: rowMeta,
   });
 
   await db

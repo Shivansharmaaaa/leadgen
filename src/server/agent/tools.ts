@@ -1,4 +1,4 @@
-import { and, eq, gte, lte, desc, sql } from "drizzle-orm";
+import { and, eq, gt, gte, lt, lte, desc, inArray, sql } from "drizzle-orm";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { addDays, addMinutes, startOfDay, isBefore, isAfter } from "date-fns";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -7,6 +7,7 @@ import {
   type tenants, type BusinessHours, type ToolCallRecord,
 } from "@/server/db";
 import { linkIdentifierToContact } from "@/server/core/identity";
+import { scheduleAppointmentReminders } from "@/server/features/reminders";
 import { searchKnowledge } from "@/server/core/knowledge";
 import { remember } from "@/server/memory/store";
 import { hybridSearch } from "@/server/retrieval/retrieve";
@@ -316,14 +317,17 @@ async function bookAppointment(ctx: AgentContext, input: Record<string, unknown>
   const endsAt = addMinutes(startsAt, duration);
 
   // Re-check the slot at write time: availability may have changed mid-conversation.
+  // Only live bookings block it (filtering after findFirst let a cancelled one
+  // hide a confirmed one in the same slot), and back-to-back slots don't overlap.
   const clash = await db.query.appointments.findFirst({
     where: and(
       eq(appointments.tenantId, ctx.tenant.id),
-      lte(appointments.startsAt, endsAt),
-      gte(appointments.endsAt, startsAt),
+      inArray(appointments.status, ["confirmed", "pending"]),
+      lt(appointments.startsAt, endsAt),
+      gt(appointments.endsAt, startsAt),
     ),
   });
-  if (clash && (clash.status === "confirmed" || clash.status === "pending")) {
+  if (clash) {
     return { ok: false, error: "that slot was just taken — call check_availability again" };
   }
 
@@ -347,6 +351,9 @@ async function bookAppointment(ctx: AgentContext, input: Record<string, unknown>
   if (lead) {
     await db.update(leads).set({ status: "booked", updatedAt: new Date() }).where(eq(leads.id, lead.id));
   }
+
+  const convo = await db.query.conversations.findFirst({ where: eq(conversations.id, ctx.conversationId) });
+  await scheduleAppointmentReminders(appt.id, { bookedOnCall: convo?.channel === "voice" });
 
   await db.insert(events).values({
     tenantId: ctx.tenant.id,

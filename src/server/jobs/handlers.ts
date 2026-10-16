@@ -1,6 +1,7 @@
 import { and, eq, lt, isNotNull } from "drizzle-orm";
 import { db, jobs, tenants, leads, appointments, conversations, messages } from "@/server/db";
 import { sendReviewRequest } from "@/server/features/reviews";
+import { sendAppointmentReminder } from "@/server/features/reminders";
 import { buildReactivationList, logReactivationRun } from "@/server/features/reactivation";
 import { buildConversionEvent, sendToMetaCapi } from "@/server/features/conversions";
 import { extractFeaturesForLead, labelLead } from "@/server/learning/features";
@@ -20,6 +21,10 @@ export type JobHandler = (payload: Record<string, unknown>, tenantId: string | n
 export const HANDLERS: Record<string, JobHandler> = {
   async review_request(payload) {
     return sendReviewRequest(String(payload.appointmentId));
+  },
+
+  async appointment_reminder(payload) {
+    return sendAppointmentReminder(payload);
   },
 
   /** Re-offer a slot once when a booking conversation goes quiet. Never nag. */
