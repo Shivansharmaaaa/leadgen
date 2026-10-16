@@ -1,3 +1,114 @@
+# Update: real-time voice — 16 October 2026
+
+Twenty commits on top of the voice/LoRA merge (`bab94e2`), all driven by live
+testing on the browser voice page. Every number here was measured on an
+Apple Silicon Mac running `llama3.2:3b` locally through Ollama.
+
+## At a glance
+
+| | Before | After |
+|---|---|---|
+| First word, conversational turn ("thanks", "hello") | ~3,000 ms | **5–21 ms** |
+| First word, service turn ("my AC stopped working") | ~3,500 ms | **4–16 ms** (opener), reply streams behind it |
+| Fixed-fact question ("do you charge for the call-out?") | full model turn | **8–20 ms**, zero tokens |
+| Off-topic question ("what model are you?") | full model turn | **5–15 ms**, zero tokens |
+| Voice | browser `speechSynthesis` | **Kokoro-82M** on the Apple GPU, RTF 0.05 |
+| Eval, 26 scenarios | — | **92 %** (54/56 checks) |
+
+## Speed
+
+- **Hybrid routing.** Each turn takes the cheapest tier that can answer it:
+  `canned` (a verified fact, no model), `chat` (no tools, lean prompt),
+  `transact` (the full pipeline), `redirect` (out of scope). Unclassified turns
+  default to the full path, never the cheap one.
+- **Canned answers from verified facts.** Questions with one correct answer are
+  read straight from the knowledge base, so the number cannot drift.
+- **Instant openers.** A matched intent speaks an opener immediately while the
+  model writes the rest behind it. Openers are pre-rendered into the TTS cache
+  at startup, so they cost a lookup, not synthesis.
+- **Bookkeeping off the critical path.** `qualify_lead` and
+  `save_contact_detail` cost a full extra generation before the agent could
+  speak. Qualification now runs from the transcript after the turn.
+- **Tools gated on preconditions.** `book_appointment` is hidden until there is
+  a name, a number and an offered slot, and tool calls for tools that were not
+  offered are dropped — a 3B model reaches for tools it remembers.
+
+## Sounding human
+
+- **Kokoro-82M** (`hexgrad/Kokoro-82M`, Apache 2.0) served locally on the
+  Apple GPU: 0.21 s of compute for 3.9 s of audio.
+- **Gapless playback.** Web Audio schedules each sentence to start exactly
+  where the last ends; Kokoro's padding is trimmed.
+- **Prosodic pauses** set by punctuation: 140 ms after a comma, 300 ms after a
+  full stop, 340 ms after a question.
+- **Speaking rate** tuned to 0.85 (≈200 wpm); `TTS_SPEED` overrides it.
+- **No repeated openers.** Varied first words per intent, never reused within
+  a conversation; eight fillers instead of four, never back to back.
+
+## Turn-taking
+
+Adopted from how production speech-to-speech systems manage the floor:
+
+- **Backchannel vs barge-in.** "mm-hmm" and "okay" over the agent mean carry
+  on; "wait" or a real sentence stops it. Only applies while the agent is
+  actually speaking, so "yes" as an answer is never discarded.
+- **Semantic endpointing.** How long to wait depends on how finished the
+  sentence sounds: 450 ms after a question, 700 ms after a complete clause,
+  1,600 ms when it trails off on "and" or "um".
+- **The caller is not cut off.** Chrome's "final" results are segments, not
+  turns; they accumulate until our own endpointing decides the caller has
+  stopped.
+- **Continuous listening** with barge-in — press the mic once.
+- **Speculative turns are silent.** A guess pre-computes the reply but never
+  speaks; it is released only when the transcript confirms it, and can never
+  book an appointment.
+- **Visible trace.** The page shows each turn-taking decision live.
+
+## Correctness
+
+- **A turn can never end in silence.** A turn with no text retries without
+  tools, then falls back to a fixed line.
+- **Handover asks first.** The model can only `offer_callback`; a real handover
+  needs an explicit yes. Escalating no longer keeps talking afterwards.
+- **Scope guard** answers off-topic and "what model are you" without a model
+  call, and is deliberately conservative so it never catches a real customer.
+- **Conversation memory.** No re-greeting mid-call, no repeated answers.
+- **No invented colleagues** ("John" was offered to call back; there is no John).
+
+## Training
+
+- **Conversion dataset** (`finetune/conversion.py`): 615 objection-handling
+  targets across price, delay, competing quotes, browsing and trust. Close to
+  an even split between bookings and declines, because a model trained only on
+  objections that dissolve learns to keep pushing. Nothing in it discounts,
+  invents a deadline or claims scarcity.
+- **Four conversion eval scenarios**, all passing on the stock model — the
+  playbook prompt carries them today.
+- **The prompt is load-bearing.** Cutting the 740-token playbook
+  (`LEAN_PROMPT=1`) dropped the eval from 92 % to 84 %, breaking contact
+  capture and emergency triage. That is the gap a LoRA is meant to close.
+
+## Infrastructure
+
+- **Moshi** (Kyutai, q4) downloaded and running; it belongs only on the `chat`
+  tier, since it cannot call tools or be screened by the outbound guardrail.
+- **Parakeet** (`parakeet-mlx`) installed to replace the browser recogniser.
+- **Separate virtualenvs** per service (`tts/`, `moshi/`, `stt/`). Installing
+  Moshi into the TTS venv pinned `huggingface_hub` and `safetensors` back and
+  took the voice down mid-call.
+- **Llama 3.2 3B base weights** downloading from Docker Hub for the LoRA run.
+
+## Not done yet
+
+- Parakeet is installed but not yet wired into the browser.
+- The LoRA has not been trained on the conversion set; base weights are still
+  downloading.
+- Moshi runs standalone at `localhost:8998` and is not yet routed into.
+- Transactional turns that genuinely need a tool still take 2–3 s on a local
+  3B model. `ANTHROPIC_API_KEY` is the immediate fix.
+
+---
+
 # Changes report: voice agent and local model
 
 Branch `claude/admiring-bardeen-fz68ih`, 15–16 October 2026.
