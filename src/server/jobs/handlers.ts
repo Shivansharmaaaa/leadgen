@@ -67,6 +67,9 @@ export const HANDLERS: Record<string, JobHandler> = {
       channel: convo.channel,
       to: { channel: convo.channel, externalId: String(payload.to) },
       body: String(payload.body),
+      // What alreadyFollowedUp looks for. Nothing ever set it, so the
+      // "follow up once, never nag" guard above could not fire.
+      meta: { followUp: true },
     });
     return { sent };
   },
