@@ -86,7 +86,8 @@ so each one is read once with all its targets, rather than once per target.
 `--optimizer adamw|lion|sgd|adafactor`, `--rank`, `--alpha`, `--targets
 attn|mlp|all`, `--rslora`, `--dora`, `--loraplus <ratio>`, `--lr`, `--clip`,
 `--grad-accum`, `--warmup`. Each run writes `metrics.json` with per-step loss,
-gradient norm and held-out loss.
+gradient norm and held-out loss. Keep gradient checkpointing on for these
+~3k-token sequences: without it the 1B was killed for memory at ~9 GB.
 
 ## Results
 
@@ -174,6 +175,28 @@ said yes. That question is now answered by Gate 1 with a fixed disclosure on
 every model, and the scenario passes. Its first word is slower than the
 untuned layout's because it now makes the tool call it should, then speaks;
 the untuned model was fast largely by skipping it.
+
+### Optimisers
+
+The same budget for each on the 1B (4 steps of 2 packed dialogues, identical
+data order — every arm's first step had loss 1.2617 and gradient norm 3.875),
+scored on the same 8 held-out rows. Untrained: 1.313.
+
+| Optimiser | lr | Held-out loss after 4 steps |
+|---|---|---|
+| AdamW + LoRA+ (B matrices at 16x) | 2e-4 | **0.619** |
+| AdamW | 2e-4 | 0.714 |
+| SGD, Nesterov momentum 0.9 | 2e-2 | 1.079 |
+| Lion | 3e-5 | 1.218 |
+
+LoRA+ beat plain AdamW by 13% at equal compute, so it is the setting for the
+next 3B run (`--loraplus 16`). Four steps and one seed measure how fast each
+gets going, not where it ends up, and Lion and SGD ran at rule-of-thumb
+learning rates rather than tuned ones — their gap says as much about the lr
+as about the optimiser. The LoRA+ adapter, exported through
+`export_ollama.py` (merge → GGUF → Q4_K_M → Ollama, 807 MB), called
+`check_availability` on the booking probe in `npm run voice:check` that both
+untuned 3B builds had failed.
 
 What a longer run should change: the set has only 27 disclosure, 35
 unknown-price and 48 escalation examples, so a 4%-of-an-epoch run barely sees
