@@ -3,6 +3,7 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { db, appointments, contacts, conversations, events, jobs, locations, messages, tenants } from "@/server/db";
 import { deliver } from "@/server/core/deliver";
 import { alertStaff } from "./staff-alerts";
+import { contactData, publish } from "./webhooks";
 
 /**
  * FEATURE 8 — appointment confirmations and reminders.
@@ -175,6 +176,10 @@ export async function handleReminderReply(args: {
       tenantId: args.tenantId, type: "appointment_confirmed_by_customer", conversationId: args.conversationId,
       contactId: appt.contactId, payload: { appointmentId: appt.id },
     });
+    await publish(args.tenantId, "appointment.confirmed", {
+      appointment_id: appt.id, service: appt.service, starts_at: appt.startsAt.toISOString(),
+      contact: await contactData(appt.contactId),
+    });
     return { action: "confirmed", appointmentId: appt.id, reply: `Thanks — you're confirmed for ${when}. See you then.` };
   }
 
@@ -185,6 +190,10 @@ export async function handleReminderReply(args: {
   await db.insert(events).values({
     tenantId: args.tenantId, type: "reschedule_requested", conversationId: args.conversationId,
     contactId: appt.contactId, payload: { appointmentId: appt.id, originalStartsAt: appt.startsAt.toISOString() },
+  });
+  await publish(args.tenantId, "appointment.reschedule_requested", {
+    appointment_id: appt.id, service: appt.service, starts_at: appt.startsAt.toISOString(),
+    contact: await contactData(appt.contactId),
   });
   // We just promised "someone will text you": tell someone.
   await alertStaff({

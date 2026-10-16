@@ -72,6 +72,8 @@ export type TenantSettings = {
   intakeKey?: string;
   /** Sites allowed to embed the chat widget, e.g. ["https://northsidehvac.com"]. */
   webchatOrigins?: string[];
+  /** Where leads, bookings and handovers are POSTed (a CRM, Zapier, Make). */
+  webhooks?: { url: string; secret: string; events?: string[] }[];
 };
 
 export const locations = pgTable("locations", {

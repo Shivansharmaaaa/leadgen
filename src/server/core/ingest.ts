@@ -8,6 +8,7 @@ import { resolveContact, linkIdentifierToContact } from "./identity";
 import { extractIdentifiers } from "./extract";
 import { detectConsentKeyword, optInConfirmation, optOutConfirmation } from "./opt-out";
 import { handleReminderReply } from "@/server/features/reminders";
+import { contactData, publish } from "@/server/features/webhooks";
 import { extractMemories } from "@/server/memory/extract";
 import { runAgentTurn, type AgentOutcome } from "@/server/agent/runtime";
 import { deliver } from "./deliver";
@@ -142,6 +143,12 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
       contactId: contact.id,
       payload: { keyword: consentKeyword.keyword, channel: msg.channel, messageId: stored.id },
     });
+    // The client's CRM has to stop too, or it texts them from there.
+    if (optingOut) {
+      await publish(msg.tenantId, "contact.opted_out", {
+        channel: msg.channel, keyword: consentKeyword.keyword, contact: await contactData(contact.id),
+      });
+    }
     const businessName = tenantRow?.settings?.businessName ?? tenantRow?.name ?? "us";
     const confirmation = optingOut
       ? optOutConfirmation(businessName, msg.channel)

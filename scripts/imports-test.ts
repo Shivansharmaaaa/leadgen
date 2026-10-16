@@ -19,7 +19,7 @@ const ENTRIES = [
   "@/server/jobs/handlers", "@/server/jobs/worker", "@/server/queries/dashboard",
   "@/server/features/reminders", "@/server/features/staff-alerts", "@/server/features/lead-intake",
   "@/server/features/scoring", "@/server/features/missed-call", "@/server/features/reviews",
-  "@/server/features/webchat",
+  "@/server/features/webchat", "@/server/features/webhooks",
   "@/app/api/voice/stream/route", "@/app/api/voice/turn/route", "@/app/api/voice/stt/route",
   "@/app/api/voice/tts/route", "@/app/api/webhooks/twilio/voice/route",
   "@/app/api/webhooks/twilio/sms/route", "@/app/api/webhooks/twilio/status/route",

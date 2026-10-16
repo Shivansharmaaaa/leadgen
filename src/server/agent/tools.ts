@@ -9,6 +9,7 @@ import {
 import { linkIdentifierToContact } from "@/server/core/identity";
 import { scheduleAppointmentReminders } from "@/server/features/reminders";
 import { alertStaff, type AlertUrgency } from "@/server/features/staff-alerts";
+import { contactData, publish } from "@/server/features/webhooks";
 import { searchKnowledge } from "@/server/core/knowledge";
 import { remember } from "@/server/memory/store";
 import { hybridSearch } from "@/server/retrieval/retrieve";
@@ -355,6 +356,11 @@ async function bookAppointment(ctx: AgentContext, input: Record<string, unknown>
 
   const convo = await db.query.conversations.findFirst({ where: eq(conversations.id, ctx.conversationId) });
   await scheduleAppointmentReminders(appt.id, { bookedOnCall: convo?.channel === "voice" });
+  await publish(ctx.tenant.id, "appointment.booked", {
+    appointment_id: appt.id, service: appt.service, starts_at: appt.startsAt.toISOString(),
+    ends_at: appt.endsAt.toISOString(), notes: appt.notes, lead_id: lead?.id ?? null,
+    conversation_id: ctx.conversationId, contact: await contactData(ctx.contactId),
+  });
 
   await db.insert(events).values({
     tenantId: ctx.tenant.id,
@@ -409,8 +415,15 @@ async function qualifyLead(ctx: AgentContext, input: Record<string, unknown>): P
     updatedAt: new Date(),
   };
 
+  const leadData = async (id: string) => ({
+    lead_id: id, service: values.service, intent: values.intent, urgency: values.urgency, score: values.score,
+    estimated_value: values.estimatedValue, summary: values.summary, conversation_id: ctx.conversationId,
+    contact: await contactData(ctx.contactId),
+  });
+
   if (existing) {
     await db.update(leads).set(values).where(eq(leads.id, existing.id));
+    await publish(ctx.tenant.id, "lead.qualified", await leadData(existing.id));
     return { ok: true, lead_id: existing.id, updated: true };
   }
 
@@ -429,6 +442,7 @@ async function qualifyLead(ctx: AgentContext, input: Record<string, unknown>): P
     contactId: ctx.contactId,
     payload: { leadId: lead.id, score: values.score, urgency: values.urgency, service: values.service },
   });
+  await publish(ctx.tenant.id, "lead.created", { ...(await leadData(lead.id)), source: conversation?.channel ?? null });
 
   return { ok: true, lead_id: lead.id, created: true };
 }
@@ -518,6 +532,11 @@ async function escalate(ctx: AgentContext, input: Record<string, unknown>): Prom
     conversationId: ctx.conversationId,
     contactId: ctx.contactId,
     payload: { reason: String(input.reason), urgency: String(input.urgency) },
+  });
+
+  await publish(ctx.tenant.id, "conversation.escalated", {
+    conversation_id: ctx.conversationId, reason: String(input.reason), urgency: String(input.urgency),
+    contact: await contactData(ctx.contactId),
   });
 
   // The customer has just been promised a person; make sure one knows. An

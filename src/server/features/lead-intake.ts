@@ -4,6 +4,7 @@ import { db, contacts, events, leads, messages, tenants } from "@/server/db";
 import { handleInbound } from "@/server/core/ingest";
 import { resolveContact } from "@/server/core/identity";
 import { normalizeEmail, normalizePhone } from "@/server/core/phone";
+import { contactData, publish } from "./webhooks";
 
 /**
  * FEATURE 7 — lead intake with an instant first response.
@@ -197,6 +198,10 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
       dedupeKey, leadId: lead.id, source: input.source, firstResponse: "manual_follow_up",
       consent, reason: "email-only lead: reply by email",
     });
+    await publish(tenantId, "lead.created", {
+      lead_id: lead.id, source: input.source, service: input.service ?? null, message: input.message ?? null,
+      first_response: "manual_follow_up", contact: await contactData(contact.id),
+    });
     return { ...empty, leadId: lead.id, contactId: contact.id, firstResponse: "manual_follow_up",
              reason: "email-only lead: reply by email" };
   }
@@ -259,6 +264,13 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
   await logIntake(tenantId, ingested.contactId, ingested.conversationId, {
     dedupeKey, leadId, source: input.source, firstResponse, consent, reason: reason ?? null,
   });
+  if (!ingested.duplicate) {
+    await publish(tenantId, "lead.created", {
+      lead_id: leadId, source: input.source, service: input.service ?? null, message: input.message ?? null,
+      first_response: firstResponse, conversation_id: ingested.conversationId,
+      contact: await contactData(ingested.contactId),
+    });
+  }
 
   return {
     duplicate: ingested.duplicate, leadId, contactId: ingested.contactId,

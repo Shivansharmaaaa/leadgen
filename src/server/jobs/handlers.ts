@@ -3,6 +3,7 @@ import { db, jobs, tenants, leads, appointments, conversations, messages } from 
 import { sendReviewRequest } from "@/server/features/reviews";
 import { sendAppointmentReminder } from "@/server/features/reminders";
 import { alertStaff, type AlertUrgency } from "@/server/features/staff-alerts";
+import { deliverWebhook } from "@/server/features/webhooks";
 import { buildReactivationList, logReactivationRun } from "@/server/features/reactivation";
 import { buildConversionEvent, sendToMetaCapi } from "@/server/features/conversions";
 import { extractFeaturesForLead, labelLead } from "@/server/learning/features";
@@ -26,6 +27,11 @@ export const HANDLERS: Record<string, JobHandler> = {
 
   async appointment_reminder(payload) {
     return sendAppointmentReminder(payload);
+  },
+
+  /** One signed POST to a tenant's CRM / Zapier URL; throws to retry with backoff. */
+  async webhook_delivery(payload, tenantId) {
+    return deliverWebhook(payload, tenantId);
   },
 
   /** A non-urgent handover that came in after hours, delivered at opening time. */
