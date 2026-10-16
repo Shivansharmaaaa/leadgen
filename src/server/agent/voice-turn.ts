@@ -410,7 +410,7 @@ export async function* runVoiceTurn(opts: {
       "Never invent a colleague's name. Say \"a colleague\" or \"someone from the team\".",
       "",
       "What they say reaches you through speech recognition, which mishears. Read it in",
-      "light of the conversation and the fact this is a heating and cooling line.",
+      `light of the conversation and ${tenant.settings?.asrContext ? `the fact that ${tenant.settings.asrContext}` : "what this business does"}.`,
       "",
       "If they repeat themselves, do NOT repeat your previous answer. Vary it, or",
       "ask something that moves things on — \"can you hear me alright?\", \"what's",
