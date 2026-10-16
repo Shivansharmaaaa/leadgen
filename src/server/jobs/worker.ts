@@ -1,4 +1,5 @@
 import { and, asc, eq, lte, or, isNull, lt, sql } from "drizzle-orm";
+import { ensureRecurringJobs } from "./schedule";
 import { db, jobs } from "@/server/db";
 import { HANDLERS } from "./handlers";
 
@@ -77,8 +78,18 @@ export async function runOnce(): Promise<{ ran: boolean; type?: string; result?:
 export async function runWorker(opts: { pollMs?: number; signal?: AbortSignal } = {}) {
   const pollMs = opts.pollMs ?? 2000;
   console.log(`[worker] started — polling every ${pollMs}ms`);
+  let lastScheduled = 0;
 
   while (!opts.signal?.aborted) {
+    // Recurring jobs (morning digest, nightly retrain): idempotent per day.
+    if (Date.now() - lastScheduled > 5 * 60_000) {
+      lastScheduled = Date.now();
+      const added = await ensureRecurringJobs().catch((err) => {
+        console.error("[worker] scheduling failed", err);
+        return 0;
+      });
+      if (added) console.log(`[worker] scheduled ${added} recurring job(s)`);
+    }
     let drained = 0;
     // Drain the queue before sleeping, so a burst is handled promptly.
     for (;;) {

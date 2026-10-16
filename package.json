@@ -35,6 +35,7 @@
     "erasure:test": "tsx --env-file=.env scripts/erasure-test.ts",
     "campaigns:test": "tsx --env-file=.env scripts/campaigns-test.ts",
     "outcomes:test": "tsx --env-file=.env scripts/outcomes-test.ts",
+    "digest:test": "tsx --env-file=.env scripts/digest-test.ts",
     "imports:test": "tsx scripts/imports-test.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",

@@ -5,6 +5,7 @@ import { sendAppointmentReminder } from "@/server/features/reminders";
 import { alertStaff, type AlertUrgency } from "@/server/features/staff-alerts";
 import { deliverWebhook } from "@/server/features/webhooks";
 import { sendCampaignMessage } from "@/server/features/campaigns";
+import { sendDigest } from "@/server/features/digest";
 import { buildReactivationList, logReactivationRun } from "@/server/features/reactivation";
 import { buildConversionEvent, sendToMetaCapi } from "@/server/features/conversions";
 import { extractFeaturesForLead, labelLead } from "@/server/learning/features";
@@ -28,6 +29,12 @@ export const HANDLERS: Record<string, JobHandler> = {
 
   async appointment_reminder(payload) {
     return sendAppointmentReminder(payload);
+  },
+
+  /** The owner's 8am summary: what happened, and what needs them. */
+  async daily_digest(_payload, tenantId) {
+    if (!tenantId) return { skipped: "no tenant" };
+    return sendDigest(tenantId);
   },
 
   /** One reactivation message, consent re-checked at send time, only inside 10am-7pm. */
