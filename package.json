@@ -26,6 +26,7 @@
     "intake:test": "tsx --env-file=.env scripts/intake-test.ts",
     "reminders:test": "tsx --env-file=.env scripts/reminders-test.ts",
     "alerts:test": "tsx --env-file=.env scripts/alerts-test.ts",
+    "imports:test": "tsx scripts/imports-test.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",
     "call:me": "tsx --env-file=.env scripts/call-me.ts",
