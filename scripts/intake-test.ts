@@ -90,6 +90,8 @@ async function main() {
     check("SMS consent recorded with its evidence", contactA?.smsConsent === true && Boolean(contactA?.consentSource?.includes("not a condition")));
     check("the agent saw the person's own words", ScriptedProvider.requests.some((r) =>
       JSON.stringify(r.history).includes("AC is blowing warm air")));
+    check("and was told the greeting is already done (no double \"Hi Priya!\")", ScriptedProvider.requests.some((r) =>
+      (r.context ?? "").includes("do not greet them")));
     // No SMS provider is configured, so a send that passed the consent gate fails at Twilio.
     check("consent gate passed (send reached the provider)", a.firstResponse === "failed", `${a.firstResponse}: ${a.reason}`);
     const out = await db.query.messages.findFirst({

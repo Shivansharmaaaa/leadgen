@@ -128,12 +128,23 @@ export async function runAgentTurn(opts: {
     loadKnowledge(tenant.id),
     recall(contact.id),
   ]);
-  const { system, context } = buildSystemPrompt({
+  const built = buildSystemPrompt({
     tenant, contact, location,
     channel: conversation.channel as Channel,
     knowledge,
     memories,
   });
+  const { system } = built;
+  // A form lead's first message goes out after a line that already greets
+  // them and says who is writing (ingest frames it). Told nothing, a model
+  // greets again: "Hi Priya, it's Alex at Northside... Hi Priya! Thanks for
+  // reaching out!" Per-turn context, so the cached system prompt is untouched.
+  const firstTouch = latestInbound?.meta?.businessInitiated === true;
+  const context = firstTouch
+    ? `${built.context}\n\nThis person filled in a form; you are writing to them first. Your reply is ` +
+      "sent straight after a line that already greets them by name and says who you are, so do not " +
+      "greet them, thank them for getting in touch, or introduce yourself: go straight to what they asked for."
+    : built.context;
 
   const llmHistory: LlmHistory = ordered
     .filter((m) => m.body.trim().length > 0)
