@@ -120,6 +120,20 @@ export type Agreement = "yes" | "no" | "unclear";
 export function readAgreement(text: string): Agreement {
   const t = text.trim();
   if (!t) return "unclear";
+
+  /**
+   * Agreement only when agreeing is ALL they said. "Okay, can someone come out
+   * tomorrow?" begins with "okay" but is a new request — reading it as "yes"
+   * to an offered callback handed a caller who wanted a visit to a human.
+   * Anything beyond the agreement itself goes back to normal handling.
+   */
+  const rest = t
+    .replace(/^(?:yes|yeah|yep|yup|sure|ok|okay|please|alright|no|nope|nah)\b[\s,.!]*/i, "")
+    .replace(/^(?:please|please do|go ahead|that'?s (?:fine|great|good|ok|okay)|sounds good|thanks?(?: you)?|cheers)\b[\s,.!]*/i, "")
+    .trim();
+  const extra = rest.split(/\s+/).filter(Boolean).length;
+  if (extra > 2) return "unclear";
+
   if (NEGATIVE.test(t)) return "no";
   if (AFFIRMATIVE.test(t)) return "yes";
   return "unclear";

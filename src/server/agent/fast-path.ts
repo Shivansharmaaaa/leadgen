@@ -31,13 +31,64 @@ export type FastPath =
 type FaqRule = {
   /** Must match for the rule to fire. */
   test: RegExp;
-  /** Fact to answer from, as `category/key`. */
-  fact: string;
-  /** How to speak it. `{value}` is the fact's value. */
-  say: (value: string) => string;
+  /** If this also matches, the rule does not fire. */
+  unless?: RegExp;
+  /** Fact(s) to answer from, as `category/key`. All must exist. */
+  fact: string | string[];
+  /** How to speak it, given the fact values in the order listed. */
+  say: (...values: string[]) => string;
 };
 
+/**
+ * Facts are written for a page. Parentheses and semicolons read badly aloud,
+ * so they become commas and sentence breaks — and the joins are tidied, or the
+ * voice says "Dealer, ." and starts the next sentence in lower case.
+ */
+function speakable(x: string): string {
+  let t = x
+    .replace(/\s*\(([^)]*)\)\s*/g, ", $1, ")
+    .replace(/\s*;\s*/g, ". ")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*([.!?])/g, "$1")
+    .replace(/,{2,}/g, ",")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/,$/, "");
+  t = t.replace(/([.!?])\s+([a-z])/g, (_, p, c) => `${p} ${c.toUpperCase()}`);
+  return t;
+}
+
+const asSentence = (x: string) => {
+  const t = speakable(x);
+  return t[0].toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : ".");
+};
+
+/** Words that make "options" or "available" about a TIME, not a product. */
+const TIME_WORDS = /\b(?:times?|slots?|appointments?|days?|today|tomorrow|tonight|morning|afternoon|evening|week|weekend|when|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+
 const FAQ_RULES: FaqRule[] = [
+  {
+    // "What AC options do you have?" was answered with appointment times.
+    // Product questions get the product facts, unless time words make it
+    // about scheduling after all.
+    test: /\b(?:options?|types?|kinds?|brands?|makes?|models?|systems?|units?)\b.*\b(?:have|offer|sell|install|do you|available|carry|got)\b|\b(?:what|which) (?:options?|types?|kinds?|brands?|systems?|units?)\b/i,
+    unless: TIME_WORDS,
+    fact: ["products/AC system types", "products/Brands installed", "products/How a system is chosen"],
+    say: (types, brands, how) =>
+      `We do ${speakable(types)}. ${asSentence(brands)} ${asSentence(how)} ` +
+      `Would you like me to set up that visit?`,
+  },
+  {
+    // Answerable from the facts, yet the model offered a callback instead.
+    // Needs a comparison or a running-cost question: a bare "energy bills"
+    // complaint may be a fault, so it goes to the model.
+    test: /\b(?:cheaper|cheapest|more efficient|most efficient|less to run|cheaper to run|running costs?|cost(?:s)? to run|efficiency)\b/i,
+    unless: TIME_WORDS,
+    fact: "products/Efficiency options",
+    say: (eff) =>
+      `We offer ${speakable(eff)}. A technician can work out which pays off for your home on the ` +
+      `free visit. Would you like me to set that up?`,
+  },
   {
     test: /\b(?:do you |is there (?:a|any) |what(?:'s| is) the )?(?:charge|cost|fee|price)\b.*\b(?:call ?out|come out|visit|diagnos|turn up|show up)\b|\bcall ?out (?:fee|charge|cost)\b/i,
     fact: "pricing/Diagnostic visit",
@@ -168,7 +219,9 @@ const PREFIX_RULES: PrefixRule[] = [
   },
   {
     intent: "booking",
-    test: /\b(?:can (?:someone|you) come|book|schedule|appointment|available|availability|when can you)\b/i,
+    // Not the bare word "available": "what AC options do you have available"
+    // is a product question, and this opener made it sound like scheduling.
+    test: /\b(?:can (?:someone|you) come|come out|book|schedule|appointment|availability|when can you|what times?|any slots?|free (?:on|tomorrow|today))\b/i,
     openers: [
       "Sure, let me check what we have.",
       "Of course, let me look at the diary.",
@@ -269,16 +322,25 @@ export async function resolveFastPath(
   if (sentences.length === 1 && t.split(/\s+/).length <= 16) {
     for (const rule of FAQ_RULES) {
       if (!rule.test.test(t)) continue;
-      const [category, key] = rule.fact.split("/");
-      const fact = await db.query.knowledgeFacts.findFirst({
-        where: and(
-          eq(knowledgeFacts.tenantId, tenantId),
-          eq(knowledgeFacts.category, category),
-          eq(knowledgeFacts.key, key),
-        ),
-      });
-      // No fact on file means no canned answer — never invent one.
-      if (fact) return { kind: "full", text: rule.say(fact.value), factKey: rule.fact };
+      if (rule.unless?.test(t)) continue;
+      const keys = Array.isArray(rule.fact) ? rule.fact : [rule.fact];
+      const values: string[] = [];
+      for (const k of keys) {
+        const [category, key] = k.split("/");
+        const fact = await db.query.knowledgeFacts.findFirst({
+          where: and(
+            eq(knowledgeFacts.tenantId, tenantId),
+            eq(knowledgeFacts.category, category),
+            eq(knowledgeFacts.key, key),
+          ),
+        });
+        if (!fact) break;
+        values.push(fact.value);
+      }
+      // Any fact missing means no canned answer — never invent one.
+      if (values.length === keys.length) {
+        return { kind: "full", text: rule.say(...values), factKey: keys.join("+") };
+      }
     }
   }
 

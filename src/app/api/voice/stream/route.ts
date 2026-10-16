@@ -19,8 +19,15 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     sessionId?: string; text?: string; tenant?: string; speculative?: boolean;
+    alternatives?: string[];
   };
   const speculative = Boolean(body.speculative);
+  // Other hearings of the same utterance when the two recognisers disagreed.
+  // Capped and length-limited: this is caller-controlled text going to a model.
+  const alternatives = (Array.isArray(body.alternatives) ? body.alternatives : [])
+    .filter((a): a is string => typeof a === "string" && a.trim().length > 0)
+    .slice(0, 2)
+    .map((a) => a.trim().slice(0, 300));
 
   const text = (body.text ?? "").trim();
   if (!text) return new Response("text is required", { status: 400 });
@@ -57,7 +64,10 @@ export async function POST(req: Request) {
   const [inbound] = await db.insert(messagesTable).values({
     tenantId: tenant.id, conversationId: conversation.id,
     direction: "inbound", channel: "voice", authorType: "contact", body: text,
-    meta: speculative ? { speculative: true } : {},
+    meta: {
+      ...(speculative ? { speculative: true } : {}),
+      ...(alternatives.length ? { alternatives } : {}),
+    },
   }).returning();
 
   await extractMemories({
@@ -88,7 +98,8 @@ export async function POST(req: Request) {
         completed = true;
         // The guess held: it is an ordinary turn now.
         if (speculative) {
-          await db.update(messagesTable).set({ meta: {} })
+          await db.update(messagesTable)
+            .set({ meta: alternatives.length ? { alternatives } : {} })
             .where(eq(messagesTable.id, inbound.id));
         }
       } catch (err) {

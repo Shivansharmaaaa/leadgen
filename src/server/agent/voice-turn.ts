@@ -59,8 +59,13 @@ function toolsFor(args: {
   hasName: boolean;
   hasPhone: boolean;
   offeredSlot: boolean;
+  schedulingInPlay: boolean;
 }): ToolSpec[] {
-  const allowed = new Set<string>(["check_availability", "offer_callback"]);
+  const allowed = new Set<string>(["offer_callback"]);
+  // Offered only once the conversation is about WHEN. With it always on the
+  // table, a 3B model answered "what AC options do you have" with appointment
+  // times, because the question contained the word "available".
+  if (args.schedulingInPlay) allowed.add("check_availability");
   // Booking needs someone to book, and a time they picked.
   if (args.hasName && args.hasPhone && args.offeredSlot) allowed.add("book_appointment");
   return VOICE_TOOLS.filter((t) => allowed.has(t.name));
@@ -76,13 +81,32 @@ export const VOICE_TOOLS: ToolSpec[] = TOOL_DEFS
 
 const VOICE_HISTORY_LIMIT = 10;
 
-/** Map stored messages into the provider-neutral history shape. */
-function llmHistoryFrom(ordered: { direction: string; body: string }[]): LlmHistory {
+/**
+ * Map stored messages into the provider-neutral history shape.
+ *
+ * When the two recognisers disagreed about a caller's words, the alternative
+ * hearing travels with the message. Deciding between "AC" and "answer" needs
+ * exactly what the model has and the recogniser does not: the rest of the
+ * conversation, and the fact that this is a heating-and-cooling line.
+ */
+function llmHistoryFrom(
+  ordered: { direction: string; body: string; meta?: Record<string, unknown> | null }[],
+): LlmHistory {
   const h: LlmHistory = ordered
     .filter((m) => m.body.trim().length > 0)
-    .map((m) => m.direction === "inbound"
-      ? ({ role: "user", content: m.body } as const)
-      : ({ role: "assistant", content: m.body } as const));
+    .map((m) => {
+      if (m.direction !== "inbound") return { role: "assistant", content: m.body } as const;
+      const alts = Array.isArray(m.meta?.alternatives) ? (m.meta!.alternatives as string[]) : [];
+      if (alts.length === 0) return { role: "user", content: m.body } as const;
+      return {
+        role: "user",
+        content:
+          `${m.body}\n\n[speech recognition was unsure — it may instead have been: ` +
+          alts.map((a) => `"${a}"`).join(" or ") +
+          `. Treat these as two hearings of ONE thing the caller said. Do not mention ` +
+          `the uncertainty; answer whichever they most plausibly meant.]`,
+      } as const;
+    });
   if (h.length === 0) h.push({ role: "user", content: "(the caller is on the line)" });
   return h;
 }
@@ -182,10 +206,17 @@ export async function* runVoiceTurn(opts: {
   const offeredSlot = ordered.some(
     (m) => m.direction === "outbound" && /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i.test(m.body),
   );
+  const SCHEDULING = /\b(?:book|schedule|appointment|come out|come round|visit|availability|when can|what times?|slots?|today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|asap|as soon as|emergency|urgent)\b/i;
+  const schedulingInPlay =
+    offeredSlot ||
+    ordered.slice(-4).some((m) => SCHEDULING.test(m.body)) ||
+    // The agent itself offered a visit, e.g. the product answer above.
+    ordered.slice(-2).some((m) => m.direction === "outbound" && /\bset up (?:that|a) visit|book (?:you|a|that)\b/i.test(m.body));
   const activeTools = toolsFor({
     hasName: Boolean(contact.displayName),
     hasPhone: Boolean(contact.primaryPhone),
     offeredSlot,
+    schedulingInPlay,
   }).filter((t) => !(opts.speculative && t.name === "book_appointment"));
 
   // Gate 1 runs before any generation — an escalation must not wait on tokens.
@@ -378,6 +409,9 @@ export async function* runVoiceTurn(opts: {
       "you'll check and stop.",
       "Never invent a colleague's name. Say \"a colleague\" or \"someone from the team\".",
       "",
+      "What they say reaches you through speech recognition, which mishears. Read it in",
+      "light of the conversation and the fact this is a heating and cooling line.",
+      "",
       "If they repeat themselves, do NOT repeat your previous answer. Vary it, or",
       "ask something that moves things on — \"can you hear me alright?\", \"what's",
       "going on with the system?\"",
@@ -460,9 +494,43 @@ export async function* runVoiceTurn(opts: {
     recall(contact.id, 10),
   ]);
 
-  const { system, context } = buildSystemPrompt({
+  const built = buildSystemPrompt({
     tenant, contact, location, channel: "voice", knowledge, memories,
   });
+  const system = built.system;
+
+  /**
+   * Per-turn notes go in `context`, never `system`. `system` is the stable
+   * prefix the prompt cache reuses across turns — that split is what took
+   * first-word latency from 22.8s to 1.1s — and anything appended to it
+   * would invalidate the cache on every turn.
+   */
+  const notes: string[] = [];
+
+  // The caller has already heard an opener: continue, do not restart.
+  if (spokenPrefix) {
+    notes.push(
+      `# Already said\nYou have just said out loud: "${spokenPrefix}". The caller heard it. ` +
+      `Carry straight on — do not repeat it, greet again, or open with another acknowledgement.`,
+    );
+  }
+
+  /**
+   * Asked for AC options, the agent read out appointment times; the caller
+   * said "AC" to correct it and got the same answer word for word. A short
+   * reply straight after an answer usually means "that is not what I meant".
+   * Quoting the previous reply makes that visible to a small model.
+   */
+  const lastReply = [...ordered].reverse().find((m) => m.direction === "outbound")?.body;
+  if (lastReply) {
+    notes.push(
+      `# Your previous reply\n"${lastReply.slice(0, 400)}"\nDo NOT repeat it or say anything ` +
+      `close to it. If the caller's latest words are short, a repeat or a correction, you ` +
+      `misunderstood them — re-read what they asked and answer that instead.`,
+    );
+  }
+
+  const context = notes.length ? `${built.context}\n\n${notes.join("\n\n")}` : built.context;
 
   const llmHistory = llmHistoryFrom(ordered);
 

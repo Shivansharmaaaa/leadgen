@@ -66,6 +66,10 @@ async function main() {
     { tenantId: tenant.id, category: "policy", key: "Warranty", value: "1 year on labour, manufacturer warranty on parts" },
     { tenantId: tenant.id, category: "policy", key: "Payment", value: "Card, check, ACH. Financing available on replacements over $3,000." },
     { tenantId: tenant.id, category: "policy", key: "Cancellation", value: "Free if cancelled more than 2 hours before the appointment" },
+    { tenantId: tenant.id, category: "products", key: "AC system types", value: "central air conditioning, heat pumps (heat and cool), and ductless mini-splits for rooms without ducts" },
+    { tenantId: tenant.id, category: "products", key: "Brands installed", value: "Carrier (we are a Carrier Factory Authorized Dealer); we also install and service Trane, Lennox, Rheem and Mitsubishi" },
+    { tenantId: tenant.id, category: "products", key: "Efficiency options", value: "standard, high-efficiency and variable-speed systems; higher efficiency costs more up front and less to run" },
+    { tenantId: tenant.id, category: "products", key: "How a system is chosen", value: "a technician sizes it to the home on a free in-home visit, then quotes in writing; we do not quote a replacement sight-unseen" },
   ]);
 
   await db.insert(knowledgeDocs).values([

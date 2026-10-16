@@ -55,8 +55,17 @@ export default function VoicePage() {
 
   /** Keeps the mic alive across Chrome's automatic restarts. */
   const wantListening = useRef(false);
-  /** The in-flight turn, so a new utterance can cancel it (barge-in). */
-  const inflight = useRef<AbortController | null>(null);
+  /**
+   * In-flight requests, kept apart by kind.
+   *
+   * There used to be one, and every send cancelled it — including speculative
+   * guesses. So while the agent was writing a real reply, the caller's next
+   * words started a background guess that cancelled the reply: the opener had
+   * already played, and then nothing. A guess may now only cancel another
+   * guess. Only a real committed turn supersedes a real reply.
+   */
+  const inflightReal = useRef<AbortController | null>(null);
+  const inflightSpec = useRef<AbortController | null>(null);
   /** The utterance a speculative request was started for. */
   const speculatedFor = useRef<string | null>(null);
   /**
@@ -68,10 +77,13 @@ export default function VoicePage() {
    * caller mid-sentence and then stopped and restarted when the real
    * transcript landed — worse than the delay it was avoiding.
    */
-  const heldSentences = useRef<string[]>([]);
-  const speculationLive = useRef(false);
-  /** Set once the transcript confirms the guess; the held answer is released. */
-  const speculationConfirmed = useRef(false);
+  /**
+   * Each speculative request owns its own state. A single shared "confirmed"
+   * flag meant that a new guess reset it while an earlier confirmed guess was
+   * still speaking, and the rest of that reply went back into hiding.
+   */
+  type SpecState = { confirmed: boolean; held: string[] };
+  const currentSpec = useRef<SpecState | null>(null);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFiller = useRef<string | null>(null);
@@ -103,6 +115,17 @@ export default function VoicePage() {
   const written = useRef(0);
   const utteranceStart = useRef<number | null>(null);
   const capture = useRef<{ ctx: AudioContext; stream: MediaStream } | null>(null);
+
+  /**
+   * Echo control. The Parakeet capture is raw — echo cancellation had to go
+   * because it starved Chrome's recogniser — so it also hears the agent
+   * through the speakers. Two defences: the utterance is cut only from after
+   * the agent was last audible, and a transcript that matches something the
+   * agent just said is rejected. "AC" was replaced by the agent's own
+   * "Let's see." before this.
+   */
+  const agentAudibleUntil = useRef(0);
+  const spokenLog = useRef<{ text: string; at: number }[]>([]);
 
   useEffect(() => {
     sessionIdRef.current = `browser_${Math.random().toString(36).slice(2, 10)}`;
@@ -227,6 +250,7 @@ export default function VoicePage() {
    * the network returns them.
    */
   const enqueueSpeech = useCallback((text: string) => {
+    spokenLog.current = [...spokenLog.current.slice(-12), { text, at: Date.now() }];
     const pending = fetchSpeech(text);
     chain.current = chain.current.then(async () => {
       const bytes = await pending;
@@ -270,19 +294,23 @@ export default function VoicePage() {
     chain.current = Promise.resolve();
   }, []);
 
-  const send = useCallback(async (text: string, opts: { speculative?: boolean } = {}) => {
-    inflight.current?.abort();
+  const send = useCallback(async (
+    text: string,
+    opts: { speculative?: boolean; alternatives?: string[] } = {},
+  ) => {
     const controller = new AbortController();
-    inflight.current = controller;
-
     if (opts.speculative) {
-      heldSentences.current = [];
-      speculationLive.current = true;
-      speculationConfirmed.current = false;
+      inflightSpec.current?.abort();
+      inflightSpec.current = controller;
     } else {
-      speculationLive.current = false;
-      speculationConfirmed.current = false;
+      inflightSpec.current?.abort();
+      inflightSpec.current = null;
+      inflightReal.current?.abort();
+      inflightReal.current = controller;
     }
+
+    const spec: SpecState | null = opts.speculative ? { confirmed: false, held: [] } : null;
+    if (spec) currentSpec.current = spec;
 
     if (!opts.speculative) {
       setTurns((t) => [...t, { who: "you", text }]);
@@ -323,7 +351,11 @@ export default function VoicePage() {
       const res = await fetch("/api/voice/stream", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: sessionIdRef.current, text, speculative: opts.speculative }),
+        body: JSON.stringify({
+          sessionId: sessionIdRef.current, text,
+          speculative: opts.speculative,
+          alternatives: opts.alternatives?.length ? opts.alternatives : undefined,
+        }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -353,10 +385,10 @@ export default function VoicePage() {
           if (ev.type === "sentence") {
             cancelFiller();
             const sentence = String(ev.text);
-            if (opts.speculative && !speculationConfirmed.current) {
+            if (spec && !spec.confirmed) {
               // Ready, not spoken. Released only once the caller is confirmed
               // to have said what we guessed.
-              heldSentences.current.push(sentence);
+              spec.held.push(sentence);
               continue;
             }
             firstWordMs ??= Number(ev.msSinceStart);
@@ -412,7 +444,8 @@ export default function VoicePage() {
     } finally {
       cancelFiller();
       void spokeFiller;
-      if (inflight.current === controller) inflight.current = null;
+      if (inflightReal.current === controller) inflightReal.current = null;
+      if (inflightSpec.current === controller) inflightSpec.current = null;
       setThinking(false);
     }
   }, [enqueueSpeech, stopSpeaking, note]);
@@ -444,17 +477,19 @@ export default function VoicePage() {
           pos = pos + 1 === RING ? 0 : pos + 1;
         }
         written.current += frame.length;
+        if (agentSpeaking()) agentAudibleUntil.current = written.current;
       };
       ac.createMediaStreamSource(stream).connect(node);
       capture.current = { ctx: ac, stream };
       note("mic", "parakeet capture running");
+      // agentSpeaking is read on every frame; keep it out of the deps loop.
     } catch (err) {
       note("mic", `parakeet capture unavailable — ${(err as Error)?.message ?? "error"}; using browser transcript`);
       // No capture means Parakeet is skipped and the browser transcript is
       // used — accuracy degrades, the call does not.
       capture.current = null;
     }
-  }, [note]);
+  }, [note, agentSpeaking]);
 
   const stopCapture = useCallback(() => {
     capture.current?.stream.getTracks().forEach((t) => t.stop());
@@ -483,21 +518,38 @@ export default function VoicePage() {
    * browser's transcript is used, because a correct word late is worse than a
    * near-correct word on time.
    */
-  const transcribe = useCallback(async (pcm: ArrayBuffer): Promise<string | null> => {
+  const transcribe = useCallback(async (pcm: ArrayBuffer): Promise<{ text: string | null; why?: string }> => {
     try {
       const res = await fetch("/api/voice/stt", {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
         body: pcm,
-        signal: AbortSignal.timeout(1500),
+        signal: AbortSignal.timeout(2500),
       });
-      if (!res.ok) return null;
+      if (!res.ok) return { text: null, why: `service returned ${res.status}` };
       const d = await res.json();
-      return typeof d.text === "string" && d.text.trim() ? d.text.trim() : null;
-    } catch {
-      return null;
+      if (typeof d.text === "string" && d.text.trim()) return { text: d.text.trim() };
+      return { text: null, why: "no speech in the captured audio" };
+    } catch (err) {
+      return { text: null, why: (err as Error)?.name === "TimeoutError" ? "timed out" : "unreachable" };
     }
   }, []);
+
+  /** Share of `a`'s words that also appear in `b`. */
+  const coverage = (a: string, b: string) => {
+    const aw = normalise(a).split(" ").filter(Boolean);
+    const bw = new Set(normalise(b).split(" ").filter(Boolean));
+    if (aw.length === 0) return 0;
+    return aw.filter((w) => bw.has(w)).length / aw.length;
+  };
+
+  /** Does this transcript repeat something the agent said in the last 20s? */
+  const isEcho = (heard: string) => {
+    const cutoff = Date.now() - 20_000;
+    return spokenLog.current.some(
+      (s) => s.at >= cutoff && coverage(heard, s.text) >= 0.6,
+    );
+  };
 
   const normalise = (t: string) => t.trim().toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ");
 
@@ -508,10 +560,13 @@ export default function VoicePage() {
    * exactly the latency saved.
    */
   const releaseSpeculation = useCallback((text: string) => {
-    speculationConfirmed.current = true;
+    const spec = currentSpec.current;
+    if (spec) spec.confirmed = true;
+    inflightReal.current?.abort();
+    inflightReal.current = inflightSpec.current;
+    inflightSpec.current = null;
     setTurns((t) => [...t, { who: "you", text }]);
-    const held = heldSentences.current;
-    heldSentences.current = [];
+    const held = spec ? spec.held.splice(0) : [];
     for (const sentence of held) enqueueSpeech(sentence);
     if (held.length > 0) setThinking(false);
   }, [enqueueSpeech]);
@@ -535,22 +590,44 @@ export default function VoicePage() {
       setInterim("");
       if (!browserText) return;
 
-      // Chrome decided WHEN the caller stopped; Parakeet decides WHAT they said.
+      /**
+       * Two recognisers, reconciled rather than one overriding the other.
+       *
+       *  - Parakeet repeating the agent's own words is echo: discarded.
+       *  - Parakeet covering most of what Chrome heard is a correction or an
+       *    extension (Chrome often drops the end of a sentence): Parakeet wins.
+       *  - A genuine disagreement is not settled here at all. The model gets
+       *    one as the transcript and the other as an alternative hearing, and
+       *    decides from the conversation which the caller meant — it knows an
+       *    HVAC call is far likelier to contain "AC" than "answer".
+       */
       let text = browserText;
+      const alternatives: string[] = [];
       const pcm = start !== null ? cutUtterance(start) : null;
       if (pcm) {
         const t0 = performance.now();
-        const heard = await transcribe(pcm);
+        const result = await transcribe(pcm);
+        const heard = result.text;
         const ms = Math.round(performance.now() - t0);
-        if (heard) {
-          if (normalise(heard) !== normalise(browserText)) {
-            note("parakeet", `${ms}ms — corrected "${browserText.slice(0, 22)}" → "${heard.slice(0, 22)}"`);
-          } else {
-            note("parakeet", `${ms}ms — confirmed`);
-          }
+
+        if (!heard) {
+          note("parakeet", `${result.why ?? "unavailable"} — used browser transcript`);
+        } else if (normalise(heard) === normalise(browserText)) {
+          note("parakeet", `${ms}ms — confirmed`);
+        } else if (isEcho(heard)) {
+          note("parakeet", `${ms}ms — ignored "${heard.slice(0, 26)}": that was the agent's own voice`);
+        // Parakeet overrules Chrome only when it contains essentially
+        // everything Chrome heard — a corrected word, or the end of a sentence
+        // Chrome dropped. At 0.5 it overruled "send me all options of basis"
+        // with "all the options of research is like to have"; on real
+        // microphone audio Parakeet is not reliably better, so anything short
+        // of near-agreement goes to the model as two hearings instead.
+        } else if (coverage(browserText, heard) >= 0.8) {
+          note("parakeet", `${ms}ms — corrected "${browserText.slice(0, 20)}" → "${heard.slice(0, 22)}"`);
           text = heard;
         } else {
-          note("parakeet", `unavailable — used browser transcript`);
+          note("parakeet", `${ms}ms — unsure: "${browserText.slice(0, 18)}" or "${heard.slice(0, 18)}" — model decides`);
+          alternatives.push(heard);
         }
       }
 
@@ -560,12 +637,12 @@ export default function VoicePage() {
         releaseSpeculation(text);
         return;
       }
-      // Guess was wrong, or there was none: drop it and run the real turn.
-      inflight.current?.abort();
-      heldSentences.current = [];
+      // Guess was wrong, or there was none: drop the guess and run the real turn.
+      inflightSpec.current?.abort();
+      inflightSpec.current = null;
+      currentSpec.current = null;
       speculatedFor.current = null;
-      speculationConfirmed.current = false;
-      void send(text);
+      void send(text, { alternatives });
     };
 
     rec.onresult = (e: any) => {
@@ -614,7 +691,9 @@ export default function VoicePage() {
       }
 
       if (utteranceStart.current === null && (finalText.trim() || interimText.trim())) {
-        utteranceStart.current = Math.max(0, written.current - 16000 * 0.8);
+        // Pre-roll catches the opening word Chrome reports late, but never
+        // reaches back into audio where the agent was talking.
+        utteranceStart.current = Math.max(0, written.current - 16000 * 0.8, agentAudibleUntil.current);
       }
       if (finalText.trim()) {
         utterance.current = `${utterance.current} ${finalText.trim()}`.trim();

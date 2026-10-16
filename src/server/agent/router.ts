@@ -45,6 +45,9 @@ const TRANSACTIONAL = [
   /\b(not (?:working|cooling|heating)|broken|leak|smell|noise|no heat|blowing warm|stopped working)\b/i,
 ];
 
+/** Words that only come up when someone is talking about their system. */
+const DOMAIN = /\b(a\/?c|air ?con(?:ditioner|ditioning)?|furnace|boiler|heat ?pump|hvac|thermostat|duct(?:work|s)?|condenser|compressor|vents?|radiator|mini ?split|filter)\b/i;
+
 /** Turns that are plainly just conversation. */
 const CONVERSATIONAL = [
   /^(?:hi|hello|hey|good (?:morning|afternoon|evening))\b/i,
@@ -77,6 +80,12 @@ export async function routeTurn(
   // Tuesday?" needs the booking path, not the chat one.
   if (TRANSACTIONAL.some((re) => re.test(t))) {
     return { tier: "transact", reason: "tool or commitment needed", fastPath: fast };
+  }
+
+  // A short turn that names the equipment is the caller getting to the point,
+  // not small talk: "AC." on its own is a service enquiry.
+  if (DOMAIN.test(t)) {
+    return { tier: "transact", reason: "names the equipment", fastPath: fast };
   }
 
   if (CONVERSATIONAL.some((re) => re.test(t)) || t.split(/\s+/).length <= 5) {
