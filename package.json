@@ -27,6 +27,7 @@
     "reminders:test": "tsx --env-file=.env scripts/reminders-test.ts",
     "alerts:test": "tsx --env-file=.env scripts/alerts-test.ts",
     "scoring:test": "tsx --env-file=.env scripts/scoring-test.ts",
+    "webchat:test": "tsx --env-file=.env scripts/webchat-test.ts",
     "imports:test": "tsx scripts/imports-test.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",

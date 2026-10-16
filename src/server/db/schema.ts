@@ -70,6 +70,8 @@ export type TenantSettings = {
    * Unset means intake is off for this tenant.
    */
   intakeKey?: string;
+  /** Sites allowed to embed the chat widget, e.g. ["https://northsidehvac.com"]. */
+  webchatOrigins?: string[];
 };
 
 export const locations = pgTable("locations", {

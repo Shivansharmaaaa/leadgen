@@ -29,6 +29,10 @@ export async function deliver(args: {
 }): Promise<boolean> {
   const adapter = getAdapter(args.channel);
   const rowMeta = args.meta ?? {};
+  // Stamped by the app, like inbound messages (ingest uses receivedAt), not
+  // by Postgres: the SLA subtracts one from the other, and the database
+  // clock here runs ~60 ms ahead of the host's.
+  const createdAt = new Date();
 
   if (!adapter) {
     await db.insert(messagesTable).values({
@@ -41,6 +45,7 @@ export async function deliver(args: {
       status: "failed",
       error: `no adapter registered for ${args.channel}`,
       meta: rowMeta,
+      createdAt,
     });
     return false;
   }
@@ -66,6 +71,7 @@ export async function deliver(args: {
         body: outbound.body,
         status: "held_for_review",
         meta: { ...rowMeta, holdReason: gate.reason },
+        createdAt,
       });
       return false;
     }
@@ -85,6 +91,7 @@ export async function deliver(args: {
     status: result.status === "sent" ? "sent" : "failed",
     error: result.error ?? null,
     meta: rowMeta,
+    createdAt,
   });
 
   await db

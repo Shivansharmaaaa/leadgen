@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat widget demo</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f8fafc; --fg: #0f172a; --muted: #64748b; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0b1220; --fg: #e2e8f0; --muted: #94a3b8; } }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 680px; margin: 0 auto; padding: 48px 16px; }
+    code { font-size: 13px; }
+    pre { overflow-x: auto; }
+    p { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>A client's website</h1>
+    <p>This page stands in for a customer's site. The chat bubble in the corner is the whole integration:</p>
+    <pre><code>&lt;script src="https://YOUR-APP/widget.js"
+        data-tenant="northside-hvac"
+        data-name="Northside Heating &amp; Air" async&gt;&lt;/script&gt;</code></pre>
+    <p>Replies come from the same agent that answers the phone. A reply a person sends from the inbox shows up here within a few seconds.</p>
+  </main>
+  <script src="/widget.js" data-tenant="northside-hvac" data-name="Northside Heating &amp; Air" async></script>
+</body>
+</html>
