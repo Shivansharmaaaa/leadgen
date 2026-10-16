@@ -326,6 +326,13 @@ def main():
                 history["evals"].append({"step": step + 1, "valid_loss": v, "elapsed_s": elapsed})
                 print(f"step {step + 1:4d}  valid {v:.4f}", flush=True)
                 (out / "metrics.json").write_text(json.dumps(history, indent=2))
+                # Keep the best adapter by held-out loss, not just the latest:
+                # the overnight 3B run bottomed at step 50 (0.588) and was
+                # 0.619 by step 75, and the step-50 weights had been overwritten.
+                if v <= min(e["valid_loss"] for e in history["evals"]):
+                    model.save_pretrained(out / "best")
+                    (out / "best" / "step.json").write_text(json.dumps({"step": step + 1, "valid_loss": v}))
+                    print(f"step {step + 1:4d}  best so far -> {out / 'best'}", flush=True)
             if (step + 1) % save_every == 0 or out_of_time:
                 save_checkpoint(step + 1)
             if out_of_time:
