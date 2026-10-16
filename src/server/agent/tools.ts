@@ -8,6 +8,7 @@ import {
 } from "@/server/db";
 import { linkIdentifierToContact } from "@/server/core/identity";
 import { scheduleAppointmentReminders } from "@/server/features/reminders";
+import { alertStaff, type AlertUrgency } from "@/server/features/staff-alerts";
 import { searchKnowledge } from "@/server/core/knowledge";
 import { remember } from "@/server/memory/store";
 import { hybridSearch } from "@/server/retrieval/retrieve";
@@ -519,9 +520,17 @@ async function escalate(ctx: AgentContext, input: Record<string, unknown>): Prom
     payload: { reason: String(input.reason), urgency: String(input.urgency) },
   });
 
+  // The customer has just been promised a person; make sure one knows. An
+  // alert failure must never stop the handover itself.
+  const alert = await alertStaff({
+    tenantId: ctx.tenant.id, conversationId: ctx.conversationId,
+    reason: String(input.reason), urgency: String(input.urgency) as AlertUrgency,
+  }).catch((err) => ({ error: err instanceof Error ? err.message : "alert failed" }));
+
   return {
     ok: true,
     escalated: true,
+    alerted: alert,
     instruction: "Tell the customer a team member will follow up shortly, then stop.",
   };
 }

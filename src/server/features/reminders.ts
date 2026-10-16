@@ -2,6 +2,7 @@ import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { db, appointments, contacts, conversations, events, jobs, locations, messages, tenants } from "@/server/db";
 import { deliver } from "@/server/core/ingest";
+import { alertStaff } from "./staff-alerts";
 
 /**
  * FEATURE 8 — appointment confirmations and reminders.
@@ -185,6 +186,11 @@ export async function handleReminderReply(args: {
     tenantId: args.tenantId, type: "reschedule_requested", conversationId: args.conversationId,
     contactId: appt.contactId, payload: { appointmentId: appt.id, originalStartsAt: appt.startsAt.toISOString() },
   });
+  // We just promised "someone will text you": tell someone.
+  await alertStaff({
+    tenantId: args.tenantId, conversationId: args.conversationId,
+    reason: `reschedule requested for ${when}`, urgency: "soon",
+  }).catch(() => undefined);
   return {
     action: "reschedule", appointmentId: appt.id,
     reply: `No problem. Someone from the team will text you shortly to find a new time. ` +

@@ -96,6 +96,12 @@ export const staff = pgTable("staff", {
   email: text("email").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull().default("agent"),
+  /** E.164 mobile for handover alerts. */
+  phone: text("phone"),
+  /** Receives a text when the AI hands a conversation over. */
+  alerts: boolean("alerts").notNull().default(true),
+  /** Woken for emergencies outside opening hours. */
+  onCall: boolean("on_call").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("staff_tenant_email_idx").on(t.tenantId, t.email)]);
 

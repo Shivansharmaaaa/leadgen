@@ -2,6 +2,7 @@ import { and, eq, lt, isNotNull } from "drizzle-orm";
 import { db, jobs, tenants, leads, appointments, conversations, messages } from "@/server/db";
 import { sendReviewRequest } from "@/server/features/reviews";
 import { sendAppointmentReminder } from "@/server/features/reminders";
+import { alertStaff, type AlertUrgency } from "@/server/features/staff-alerts";
 import { buildReactivationList, logReactivationRun } from "@/server/features/reactivation";
 import { buildConversionEvent, sendToMetaCapi } from "@/server/features/conversions";
 import { extractFeaturesForLead, labelLead } from "@/server/learning/features";
@@ -25,6 +26,15 @@ export const HANDLERS: Record<string, JobHandler> = {
 
   async appointment_reminder(payload) {
     return sendAppointmentReminder(payload);
+  },
+
+  /** A non-urgent handover that came in after hours, delivered at opening time. */
+  async staff_alert(payload, tenantId) {
+    if (!tenantId) return { skipped: "no tenant" };
+    return alertStaff({
+      tenantId, conversationId: String(payload.conversationId), reason: String(payload.reason),
+      urgency: payload.urgency as AlertUrgency, deferred: true,
+    });
   },
 
   /** Re-offer a slot once when a booking conversation goes quiet. Never nag. */
