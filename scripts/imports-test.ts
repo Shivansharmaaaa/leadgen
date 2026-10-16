@@ -30,6 +30,7 @@ const ENTRIES = [
   "@/server/features/erasure", "@/server/core/suppression", "@/server/core/identity",
   "@/server/features/campaigns", "@/app/dashboard/actions", "@/server/features/appointment-outcomes",
   "@/server/features/digest", "@/server/jobs/schedule", "@/server/queries/source-roi",
+  "@/server/queries/health", "@/app/api/health/route",
 ];
 
 const dir = mkdtempSync(join(process.cwd(), "scripts", ".imports-"));

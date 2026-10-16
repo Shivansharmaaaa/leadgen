@@ -8,6 +8,7 @@ import { coachReport } from "@/server/features/scoring";
 import { isOpen } from "@/server/features/staff-alerts";
 import { jobsToClose } from "@/server/features/appointment-outcomes";
 import { sourceRoi } from "./source-roi";
+import { overdueJobs } from "./health";
 import { buildReactivationList } from "@/server/features/reactivation";
 import { findCrossSellOpportunities } from "@/server/features/referrals";
 import { measureLift, type LiftReport } from "@/server/learning/incrementality";
@@ -26,7 +27,7 @@ export async function getDashboard(tenantSlug: string, days = 30) {
 
   const since = new Date(Date.now() - days * 86400_000);
 
-  const [evs, leadRows, apptRows, convRows, runs, sla, reactivation, crossSell, coach, location, toClose] =
+  const [evs, leadRows, apptRows, convRows, runs, sla, reactivation, crossSell, coach, location, toClose, overdue] =
     await Promise.all([
       db.query.events.findMany({
         where: and(eq(events.tenantId, tenant.id), gte(events.createdAt, since)),
@@ -51,6 +52,7 @@ export async function getDashboard(tenantSlug: string, days = 30) {
       coachReport(tenant.id, days),
       db.query.locations.findFirst({ where: eq(locations.tenantId, tenant.id) }),
       jobsToClose(tenant.id),
+      overdueJobs(tenant.id),
     ]);
 
   const count = (type: string) => evs.filter((e) => e.type === type).length;
@@ -142,6 +144,7 @@ export async function getDashboard(tenantSlug: string, days = 30) {
     },
     optOuts: count("opt_out"),
     jobsToClose: toClose,
+    overdue,
     byChannel: [...byChannel.entries()].sort((a, b) => b[1] - a[1]),
     recentLeads: leadRows.slice(0, 10),
     upcomingAppointments: apptRows

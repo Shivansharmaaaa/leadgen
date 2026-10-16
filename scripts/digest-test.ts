@@ -69,6 +69,18 @@ async function main() {
     const again = await ensureRecurringJobs();
     check("calling it again (another worker, five minutes later) adds nothing", again === 0, `first ${first}, again ${again}`);
 
+    console.log("\nNoticing that the worker isn't running");
+    const { overdueJobs } = await import("@/server/queries/health");
+    const { GET: health } = await import("@/app/api/health/route");
+    const before = (await overdueJobs(tenant.id)).count;
+    await db.insert(jobs).values({ tenantId: tenant.id, type: "appointment_reminder", payload: {}, runAt: new Date(Date.now() - 30 * 60_000) });
+    await db.insert(jobs).values({ tenantId: tenant.id, type: "appointment_reminder", payload: {}, runAt: new Date(Date.now() + 30 * 60_000) });
+    const od = await overdueJobs(tenant.id);
+    check("a job due 30 minutes ago and still pending is overdue; a future one isn't", od.count === before + 1 && (od.oldestMinutes ?? 0) >= 29, JSON.stringify(od));
+    const h = await health();
+    check("/api/health says the worker is behind (503)", h.status === 503 && (await h.json()).worker === "behind");
+    await db.delete(jobs).where(and(eq(jobs.tenantId, tenant.id), eq(jobs.type, "appointment_reminder")));
+
     console.log("\nThe digest");
     const [c] = await db.insert(contacts).values({ tenantId: tenant.id, displayName: "Mia", primaryPhone: "+16175550501" }).returning();
     const [cv] = await db.insert(conversations).values({ tenantId: tenant.id, contactId: c.id, channel: "sms" }).returning();

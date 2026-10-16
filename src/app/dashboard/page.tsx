@@ -16,6 +16,13 @@ export default async function DashboardPage() {
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px 100px" }}>
       <Header title={data.tenant.name} subtitle={`Last ${data.days} days`} />
+      {data.overdue.count > 0 && (
+        <div role="alert" style={{ padding: "12px 16px", marginBottom: 24, borderRadius: "var(--radius)",
+                                   border: "1px solid var(--danger)", color: "var(--danger)", fontSize: 14 }}>
+          {data.overdue.count} scheduled job{data.overdue.count === 1 ? " is" : "s are"} overdue (oldest {data.overdue.oldestMinutes} min):
+          reminders, team alerts, CRM updates and campaigns aren't going out. Is <code>npm run worker</code> running?
+        </div>
+      )}
       <nav style={{ display: "flex", gap: 16, margin: "-20px 0 28px", fontSize: 13 }}>
         <Link href="/inbox" style={{ color: "var(--accent)" }}>Inbox</Link>
         <Link href="/settings" style={{ color: "var(--accent)" }}>Settings</Link>
