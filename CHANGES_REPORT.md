@@ -1,3 +1,52 @@
+# Update: hearing in context — 17 October 2026
+
+Three commits (`8ff9a87`, `03caae8`, `955ba52`) fixing what live testing on the voice page
+turned up: "AC" heard as "bases", the agent's own voice heard as the caller,
+silence after an opener, and product questions answered with appointment times.
+
+## What was wrong, and what changed
+
+| Problem in the live test | Cause | Fix |
+|---|---|---|
+| "AC" became "Let's see." | The mic picked up the agent's own voice | Capture starts only after the agent's audio ends; a turn that is ≥60 % the agent's last 20 s of speech is dropped as echo |
+| "AC" became "bases" | Parakeet overrode a better Chrome transcript whenever they overlapped 50 % | Parakeet wins only at ≥80 % overlap. Otherwise **both hearings go to the model**, marked as one thing heard two ways, and it answers whichever fits the conversation |
+| Opener, then silence | A speculative turn aborted the confirmed reply: they shared one abort controller and one "confirmed" flag | Separate controllers and per-request state |
+| "What AC options do you have?" got appointment times | No product facts; "available" triggered the booking opener; `check_availability` was always offered | Four product facts; FAQ answers for options and running costs; equipment words route to the full pipeline; `check_availability` is only offered once scheduling comes up |
+| "okay can someone come out tomorrow" was handed to a human | "okay" read as agreeing to a callback | Agreement means the agreement word plus at most two more words; anything longer is a new request (9/9 cases) |
+| Same answer to "hello" twice | Previous reply not in view | The previous reply goes into the per-turn context with "do not repeat it" |
+| Every tenant told "this is a heating and cooling line" | Hardcoded in the chat tier | Reads the tenant's `settings.asrContext` (the main prompt already did, `97d214d`) |
+
+## Replayed against the live route
+
+The same turns that failed live, sent to `/api/voice/stream` on a fresh server
+(model turns were slowed by an eval sharing Ollama at the same time):
+
+| Caller | Agent | First sentence |
+|---|---|---|
+| "bases" (alternative heard: "AC") | "You're having some issues with your air conditioning. Can I help you with that?" | model turn |
+| "what AC options do you have" | system types, brands, how a system is chosen, offer of a visit | **36 ms**, no model |
+| "which one is cheaper to run" | efficiency tiers, offer of a visit | **26 ms**, no model |
+| "okay can someone come out tomorrow" | checked availability, offered two slots tomorrow | **27 ms** opener, then the tool |
+
+## Eval: one check worse, and not yet a clean comparison
+
+`npm run eval` on `8ff9a87` with llama3.2:3b: **88 % of scenarios (53/56 checks)**
+against the 92 % (54/56) baseline. The two runs failed *different* scenarios:
+
+| Scenario | Channel | Cause |
+|---|---|---|
+| `emergency_urgency` | voice | **Our regression.** The new rule offered `check_availability` only after scheduling words, and "no heat at all and there's a baby in the house" has none, so the agent couldn't offer a time. Fixed in `955ba52` (a described fault opens scheduling, 7/7 gate cases). Not yet re-run |
+| `objection_other_quotes`, `contact_capture` | webchat | The model offered times without calling the tool, and the guardrail held the reply as designed. The new product facts went in *between* the baseline and this run, and the reply quotes one, so a single run can't separate fact wording from the 3B model's run-to-run variance |
+
+Not re-run yet, because the GPU is lent to the overnight LoRA training. Next
+step: run it with and without the product facts, several times each.
+
+## Still open
+
+Listed in `TODO.md` section 5. Most important: two more HVAC-only spots (the
+router's equipment-word list and the product FAQ's fact keys), and screening
+each sentence before it is spoken so a made-up time slot can't be said aloud.
+
 # Update: real-time voice — 16 October 2026
 
 Twenty commits on top of the voice/LoRA merge (`bab94e2`), all driven by live
