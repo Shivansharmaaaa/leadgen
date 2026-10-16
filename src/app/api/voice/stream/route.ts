@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
-import { db, tenants, messages as messagesTable, conversations } from "@/server/db";
+import { db, tenants, messages as messagesTable, conversations, contacts, events } from "@/server/db";
+import { detectConsentKeyword, optOutConfirmation } from "@/server/core/opt-out";
 import { resolveContact } from "@/server/core/identity";
 import { extractIdentifiers } from "@/server/core/extract";
 import { linkIdentifierToContact } from "@/server/core/identity";
@@ -70,6 +71,33 @@ export async function POST(req: Request) {
     },
   }).returning();
 
+  // Opting out is decided by rule before the agent runs, as handleInbound
+  // does for the other routes: a chatty reply to "don't call me again" is
+  // what a TCPA claim quotes. A guess is never acted on: "don't call me"
+  // may end "…, text me instead", which is a preference, not an opt-out. The
+  // client sends the confirmed turn instead.
+  const consent = detectConsentKeyword(text, "voice");
+  if (consent?.kind === "opt_out") {
+    if (speculative) {
+      await db.delete(messagesTable).where(eq(messagesTable.id, inbound.id));
+      return sse([{ type: "declined", reason: "an opt-out is never acted on from a guess" }]);
+    }
+    await db.update(contacts).set({ doNotContact: true }).where(eq(contacts.id, contact.id));
+    await db.insert(events).values({
+      tenantId: tenant.id, type: "opt_out", conversationId: conversation.id, contactId: contact.id,
+      payload: { keyword: consent.keyword, channel: "voice", messageId: inbound.id },
+    });
+    const confirmation = optOutConfirmation(tenant.settings?.businessName ?? tenant.name, "voice");
+    await db.insert(messagesTable).values({
+      tenantId: tenant.id, conversationId: conversation.id,
+      direction: "outbound", channel: "voice", authorType: "system", body: confirmation,
+    });
+    return sse([
+      ...confirmation.split(/(?<=[.!?])\s+/).map((s) => ({ type: "sentence", text: s, msSinceStart: 0 })),
+      { type: "done", fullText: confirmation, latencyMs: 0, firstWordMs: 0, provider: "rule", model: "opt-out" },
+    ]);
+  }
+
   await extractMemories({
     tenantId: tenant.id, contactId: contact.id, text,
     conversationId: conversation.id, messageId: inbound.id,
@@ -120,13 +148,18 @@ export async function POST(req: Request) {
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
+}
+
+const SSE_HEADERS = {
+  "content-type": "text/event-stream; charset=utf-8",
+  "cache-control": "no-cache, no-transform",
+  connection: "keep-alive",
+};
+
+/** A turn decided without the model: every event at once. */
+function sse(evs: unknown[]): Response {
+  return new Response(evs.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""), { headers: SSE_HEADERS });
 }
 
 function hash(s: string): number {

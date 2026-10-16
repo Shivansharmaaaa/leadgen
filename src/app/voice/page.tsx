@@ -82,7 +82,8 @@ export default function VoicePage() {
    * flag meant that a new guess reset it while an earlier confirmed guess was
    * still speaking, and the rest of that reply went back into hiding.
    */
-  type SpecState = { confirmed: boolean; held: string[] };
+  /** `declined`: the server would not act on this guess (an opt-out). */
+  type SpecState = { confirmed: boolean; held: string[]; declined: boolean };
   const currentSpec = useRef<SpecState | null>(null);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -296,7 +297,9 @@ export default function VoicePage() {
 
   const send = useCallback(async (
     text: string,
-    opts: { speculative?: boolean; alternatives?: string[] } = {},
+    // `rerun`: the caller's bubble is already on screen (a released guess the
+    // server then declined), so only the reply is still owed.
+    opts: { speculative?: boolean; alternatives?: string[]; rerun?: boolean } = {},
   ) => {
     const controller = new AbortController();
     if (opts.speculative) {
@@ -309,11 +312,11 @@ export default function VoicePage() {
       inflightReal.current = controller;
     }
 
-    const spec: SpecState | null = opts.speculative ? { confirmed: false, held: [] } : null;
+    const spec: SpecState | null = opts.speculative ? { confirmed: false, held: [], declined: false } : null;
     if (spec) currentSpec.current = spec;
 
     if (!opts.speculative) {
-      setTurns((t) => [...t, { who: "you", text }]);
+      if (!opts.rerun) setTurns((t) => [...t, { who: "you", text }]);
       setThinking(true);
     }
 
@@ -431,6 +434,12 @@ export default function VoicePage() {
               }
               return copy;
             });
+          } else if (ev.type === "declined") {
+            note("speculate", `declined — ${String(ev.reason)}`);
+            // Already released: the caller has finished, so run it for real
+            // now. Otherwise commitTurn sees the flag and does.
+            if (spec?.confirmed) void send(text, { rerun: true });
+            else if (spec) spec.declined = true;
           } else if (ev.type === "error") {
             setTurns((t) => [...t, { who: "system", text: String(ev.message) }]);
           }
@@ -632,7 +641,10 @@ export default function VoicePage() {
       }
 
       // The speculative run already started on exactly this — release it.
-      if (speculatedFor.current && normalise(speculatedFor.current) === normalise(text)) {
+      if (
+        speculatedFor.current && normalise(speculatedFor.current) === normalise(text) &&
+        !currentSpec.current?.declined
+      ) {
         speculatedFor.current = null;
         releaseSpeculation(text);
         return;
