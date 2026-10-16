@@ -1,7 +1,7 @@
 import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { db, appointments, contacts, conversations, events, jobs, locations, messages, tenants } from "@/server/db";
-import { deliver } from "@/server/core/ingest";
+import { deliver } from "@/server/core/deliver";
 import { alertStaff } from "./staff-alerts";
 
 /**
