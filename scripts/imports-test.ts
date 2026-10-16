@@ -24,6 +24,7 @@ const ENTRIES = [
   "@/app/api/voice/tts/route", "@/app/api/webhooks/twilio/voice/route",
   "@/app/api/webhooks/twilio/sms/route", "@/app/api/webhooks/twilio/status/route",
   "@/app/api/inbox/route", "@/app/api/leads/route", "@/app/api/chat/route",
+  "@/app/api/auth/login/route", "@/app/api/auth/logout/route", "@/middleware",
 ];
 
 const dir = mkdtempSync(join(process.cwd(), "scripts", ".imports-"));
