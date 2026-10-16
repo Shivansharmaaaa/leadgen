@@ -97,6 +97,10 @@ sign-in), and each piece has its own test suite that runs without a model
 | **Team alerts** | automatic on every handover | Texts staff: emergencies (gas smell, CO alarm) to whoever is on call at any hour; other handovers during opening hours; after-hours non-urgent ones wait for opening. Someone who smells gas is first told to leave and call 911. |
 | **Conversation scoring** | `/dashboard` | Every conversation's outcome and what was missed: asked for a time and never offered one, price question dodged, reply stuck in review, handover nobody answered, and more, each with the line that raised it. |
 | **CRM webhooks** | `/settings` → Send to your CRM | New leads, bookings, confirmations, reschedules, handovers and opt-outs POSTed as signed JSON (`x-leadgen-signature`, HMAC-SHA256, replay-proof) to a CRM, Zapier or Make. Retries with backoff. |
+| **Reactivation campaigns** | `/dashboard` → Start campaign | Messages the top dormant leads who agreed to hear from you, ranked by expected *incremental* value. Every campaign holds a random ~15% back first, so "Did it actually work?" can answer honestly. 10am–7pm only; a STOP after launch wins. |
+| **Closing jobs** | `/dashboard` → How did these jobs go? | Done / No-show / Cancelled on past jobs. Done wins the lead and asks for a review three hours later. |
+| **Morning summary** | email, 8am local | What happened in the last day and what needs the owner, with links. |
+| **Erasure** | `/inbox` → erase | Deletes everything about a person on request (UK GDPR Art. 17, CCPA, PIPEDA), and keeps a hashed do-not-contact entry so they're never contacted again. |
 | **Owner sign-in** | `/login` | `/dashboard`, `/inbox`, `/settings` and the inbox API need `ADMIN_PASSWORD`. Open in development; refused in production until it is set. |
 
 ### Setting them up
@@ -104,13 +108,15 @@ sign-in), and each piece has its own test suite that runs without a model
 ```bash
 # .env
 ADMIN_PASSWORD=...          # required in production
+SUPPRESSION_SECRET=...      # set once, never change (keys the erasure do-not-contact list)
 SMTP_HOST=... EMAIL_FROM=... # email out; EMAIL_INBOUND_TOKEN=... for email in
 TWILIO_ACCOUNT_SID=... TWILIO_AUTH_TOKEN=...   # texts, alerts, calls
 ```
 
 Then at `/settings`: add the team's mobiles (and who is on call), create an
 intake key, paste the chat snippet on the website and list the site, and add
-a CRM endpoint. Run `npm run worker` so reminders, alerts and webhooks go out.
+a CRM endpoint. Run `npm run worker` so reminders, alerts, webhooks, campaigns,
+the morning summary and the nightly retrain go out.
 
 ## Commands
 
@@ -137,6 +143,7 @@ a CRM endpoint. Run `npm run worker` so reminders, alerts and webhooks go out.
 | `npm run webhooks:test` | Signing, the private-network guard, delivery to a real receiver |
 | `npm run email:test` | Email in and out through a real SMTP conversation |
 | `npm run auth:test` / `settings:test` | Sign-in, middleware, and every settings rule |
+| `npm run erasure:test` / `campaigns:test` / `outcomes:test` / `digest:test` | Erasure, campaigns with holdouts, closing jobs, the morning summary |
 | `npm run imports:test` | Loads every entry point first, each in a fresh process (catches import cycles) |
 
 ## Status
