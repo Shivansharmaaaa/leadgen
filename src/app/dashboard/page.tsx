@@ -103,12 +103,16 @@ export default async function DashboardPage() {
 
       {data.leadSources.length > 0 && (
         <Section title="Which lead sources turn into jobs"
-                 hint="Where to spend: the share of each source's leads that booked.">
+                 hint="Where to spend: the share of each source's leads that booked, and what each booked job cost. Enter what you pay each source in Settings.">
           <Table
-            head={["Source", "Leads", "Booked", "Booked rate"]}
+            head={["Source", "Leads", "Booked", "Booked rate", "Spend", "Per lead", "Per booked job"]}
             rows={data.leadSources.map((s) => [
               SOURCE_LABEL[s.source] ?? s.source, s.leads, s.booked,
               `${s.leads ? Math.round((s.booked / s.leads) * 100) : 0}%`,
+              s.spend != null ? money(s.spend) : "—",
+              s.costPerLead != null ? money(s.costPerLead) : "—",
+              s.costPerBooked != null ? <strong key="c">{money(s.costPerBooked)}</strong>
+                : s.spend ? <span key="n" style={{ color: "var(--danger)" }}>no bookings yet</span> : "—",
             ])}
           />
         </Section>

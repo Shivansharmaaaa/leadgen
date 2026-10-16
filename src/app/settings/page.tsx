@@ -4,7 +4,7 @@ import { db, staff } from "@/server/db";
 import { getTenant } from "@/server/settings";
 import { WEBHOOK_EVENTS } from "@/server/features/webhooks";
 import { deleteStaff, deleteWebhook } from "./actions";
-import { BusinessForm, IntakePanel, OriginsForm, StaffForm, WebhookForm } from "./forms";
+import { BusinessForm, IntakePanel, OriginsForm, SpendForm, StaffForm, WebhookForm } from "./forms";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +57,14 @@ export default async function SettingsPage() {
           {`<script src="${app}/widget.js" data-tenant="${tenant.slug}" data-name="${attr(s.businessName ?? tenant.name)}" async></script>`}
         </code>
         <OriginsForm origins={s.webchatOrigins ?? []} />
+      </Section>
+
+      <Section title="What you pay for leads" hint="Monthly spend per source. The dashboard turns it into cost per lead and cost per booked job, so you can see which sources are worth it.">
+        <SpendForm spend={s.sourceSpend ?? {}} sources={[
+          { key: "google_lsa", label: "Google Local Services" }, { key: "angi", label: "Angi" },
+          { key: "thumbtack", label: "Thumbtack" }, { key: "facebook_lead_ad", label: "Facebook lead ads" },
+          { key: "website", label: "Website / SEO" }, { key: "voice", label: "Phone (ads, listings)" },
+        ]} />
       </Section>
 
       <Section title="Send to your CRM" hint="Every new lead, booking, confirmation, reschedule, handover and opt-out is posted as signed JSON. Check the x-leadgen-signature header with your signing secret.">

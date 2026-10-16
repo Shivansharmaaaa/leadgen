@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, tenants, staff } from "@/server/db";
 import {
-  addWebhook, disableIntake, removeStaff, removeWebhook, rotateIntakeKey, setWebchatOrigins, updateBusiness, upsertStaff,
+  addWebhook, disableIntake, removeStaff, removeWebhook, rotateIntakeKey, setSourceSpend, setWebchatOrigins, updateBusiness, upsertStaff,
 } from "@/server/settings";
 import { POST as intake } from "@/app/api/leads/route";
 
@@ -71,6 +71,19 @@ async function main() {
     check("http refused for a real site", !(await setWebchatOrigins(tenant.id, "http://example.com")).ok);
     check("http allowed for a local dev server", (await setWebchatOrigins(tenant.id, "http://localhost:3000")).ok);
     check("nonsense refused with a sentence", !(await setWebchatOrigins(tenant.id, "my website")).ok);
+
+    console.log("\nLead source spend");
+    const sp = await setSourceSpend(tenant.id, { angi: "$1,200", thumbtack: "", google_lsa: "350.5" });
+    check("amounts parsed, blanks dropped", sp.ok && JSON.stringify(sp.value) === '{"angi":1200,"google_lsa":350.5}', JSON.stringify(sp.value));
+    check("a negative amount is refused", !(await setSourceSpend(tenant.id, { angi: "-5" })).ok);
+    check("words are refused", !(await setSourceSpend(tenant.id, { angi: "lots" })).ok);
+    const { sourceRoi } = await import("@/server/queries/source-roi");
+    const roi = sourceRoi([{ source: "angi", leads: 12, booked: 3 }, { source: "voice", leads: 5, booked: 2 }], { angi: 1200, thumbtack: 300 }, 30);
+    const angi = roi.find((r) => r.source === "angi")!;
+    check("cost per lead and per booked job", angi.costPerLead === 100 && angi.costPerBooked === 400);
+    check("a source without spend shows no cost", roi.find((r) => r.source === "voice")?.spend === null);
+    check("a paid source with no leads still shows, so the waste is visible", roi.some((r) => r.source === "thumbtack" && r.leads === 0 && r.spend === 300));
+    check("spend is prorated to the window (7 days of $1,200/month)", sourceRoi([{ source: "angi", leads: 1, booked: 1 }], { angi: 1200 }, 7)[0].spend === 280);
 
     console.log("\nWebhooks");
     const w = await addWebhook(tenant.id, "https://hooks.zapier.com/hooks/catch/123/abc", ["lead.created", "appointment.booked"]);

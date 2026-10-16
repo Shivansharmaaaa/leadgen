@@ -29,7 +29,7 @@ const ENTRIES = [
   "@/server/channels/email", "@/app/api/webhooks/email/route",
   "@/server/features/erasure", "@/server/core/suppression", "@/server/core/identity",
   "@/server/features/campaigns", "@/app/dashboard/actions", "@/server/features/appointment-outcomes",
-  "@/server/features/digest", "@/server/jobs/schedule",
+  "@/server/features/digest", "@/server/jobs/schedule", "@/server/queries/source-roi",
 ];
 
 const dir = mkdtempSync(join(process.cwd(), "scripts", ".imports-"));

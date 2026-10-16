@@ -7,6 +7,7 @@ import { slaReport } from "@/server/features/sla";
 import { coachReport } from "@/server/features/scoring";
 import { isOpen } from "@/server/features/staff-alerts";
 import { jobsToClose } from "@/server/features/appointment-outcomes";
+import { sourceRoi } from "./source-roi";
 import { buildReactivationList } from "@/server/features/reactivation";
 import { findCrossSellOpportunities } from "@/server/features/referrals";
 import { measureLift, type LiftReport } from "@/server/learning/incrementality";
@@ -122,7 +123,7 @@ export async function getDashboard(tenantSlug: string, days = 30) {
     },
     sla,
     coach,
-    leadSources: [...sourceRows.values()].sort((a, b) => b.leads - a.leads),
+    leadSources: sourceRoi([...sourceRows.values()].sort((a, b) => b.leads - a.leads), tenant.settings?.sourceSpend, days),
     forms: {
       leadsNotTexted,
       problems: [...formProblems.entries()].sort((a, b) => b[1] - a[1]),

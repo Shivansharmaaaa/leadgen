@@ -74,6 +74,8 @@ export type TenantSettings = {
   webchatOrigins?: string[];
   /** Where leads, bookings and handovers are POSTed (a CRM, Zapier, Make). */
   webhooks?: { url: string; secret: string; events?: string[] }[];
+  /** Monthly spend per lead source ("angi": 600), for cost per booked job. */
+  sourceSpend?: Record<string, number>;
 };
 
 export const locations = pgTable("locations", {

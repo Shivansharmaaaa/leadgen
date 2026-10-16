@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import {
-  saveBusiness, saveStaff, newIntakeKey, turnOffIntake, saveOrigins, saveWebhook, type ActionState,
+  saveBusiness, saveStaff, newIntakeKey, turnOffIntake, saveOrigins, saveWebhook, saveSpend, type ActionState,
 } from "./actions";
 
 const input: React.CSSProperties = {
@@ -118,6 +118,24 @@ export function WebhookForm({ events }: { events: readonly string[] }) {
         ))}
       </fieldset>
       <div><button style={button} disabled={pending}>{pending ? "Checking…" : "Add endpoint"}</button></div>
+      <Status state={state} />
+    </form>
+  );
+}
+
+export function SpendForm({ sources, spend }: { sources: { key: string; label: string }[]; spend: Record<string, number> }) {
+  const [state, action, pending] = useActionState(saveSpend, undefined);
+  return (
+    <form action={action} style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+        {sources.map((s) => (
+          <div key={s.key}>
+            <label style={label} htmlFor={`spend-${s.key}`}>{s.label} ($/month)</label>
+            <input id={`spend-${s.key}`} name={`spend:${s.key}`} inputMode="decimal" defaultValue={spend[s.key] ?? ""} style={input} placeholder="0" />
+          </div>
+        ))}
+      </div>
+      <div><button style={button} disabled={pending}>Save</button></div>
       <Status state={state} />
     </form>
   );

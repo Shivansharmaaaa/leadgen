@@ -140,3 +140,18 @@ export async function removeWebhook(tenantId: string, url: string): Promise<Resu
   await patchSettings(tenantId, { webhooks: (t?.settings?.webhooks ?? []).filter((w) => w.url !== url) });
   return { ok: true };
 }
+
+/** Monthly spend per lead source. Blank removes it; nothing negative or absurd. */
+export async function setSourceSpend(tenantId: string, raw: Record<string, string>): Promise<Result<Record<string, number>>> {
+  const spend: Record<string, number> = {};
+  for (const [source, value] of Object.entries(raw)) {
+    const v = value.trim().replace(/[$,£\s]/g, "");
+    if (!v) continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 10_000_000) return { ok: false, error: `"${value}" for ${source} isn't an amount.` };
+    if (!/^[a-z_]{2,40}$/.test(source)) return { ok: false, error: `Unknown source ${source}.` };
+    spend[source] = Math.round(n * 100) / 100;
+  }
+  await patchSettings(tenantId, { sourceSpend: Object.keys(spend).length ? spend : undefined });
+  return { ok: true, value: spend };
+}

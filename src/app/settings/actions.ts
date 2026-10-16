@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireOwner } from "@/server/auth/owner";
 import {
-  addWebhook, disableIntake, getTenant, removeStaff, removeWebhook, rotateIntakeKey, setWebchatOrigins,
+  addWebhook, disableIntake, getTenant, removeStaff, removeWebhook, rotateIntakeKey, setSourceSpend, setWebchatOrigins,
   updateBusiness, upsertStaff,
 } from "@/server/settings";
 
@@ -80,4 +80,12 @@ export async function deleteWebhook(form: FormData): Promise<void> {
   const t = await tenantOrThrow();
   await removeWebhook(t.id, String(form.get("url")));
   revalidatePath("/settings");
+}
+
+export async function saveSpend(_: ActionState, form: FormData): Promise<ActionState> {
+  const t = await tenantOrThrow();
+  const raw: Record<string, string> = {};
+  for (const [k, v] of form.entries()) if (k.startsWith("spend:")) raw[k.slice(6)] = String(v);
+  const r = await setSourceSpend(t.id, raw);
+  return r.ok ? done("Saved. Cost per booked job is on the dashboard.") : { error: r.error };
 }
