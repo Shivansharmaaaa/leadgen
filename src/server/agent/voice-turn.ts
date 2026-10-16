@@ -10,7 +10,7 @@ import { buildSystemPrompt } from "./prompt";
 import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
 import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 import { qualifyFromTranscript } from "./post-turn";
-import { screenScope, overBudget, MAX_AI_TURNS } from "@/server/core/scope";
+import { screenScope, overBudget, MAX_AI_TURNS, readAgreement } from "@/server/core/scope";
 import { resolveFastPath, cleanContinuation } from "./fast-path";
 import { routeTurn } from "./router";
 
@@ -43,7 +43,7 @@ import { routeTurn } from "./router";
  * from the transcript after the turn (`post-turn.ts`).
  */
 const VOICE_TOOL_NAMES = [
-  "check_availability", "book_appointment", "escalate_to_human",
+  "check_availability", "book_appointment", "offer_callback",
 ];
 
 /**
@@ -60,7 +60,7 @@ function toolsFor(args: {
   hasPhone: boolean;
   offeredSlot: boolean;
 }): ToolSpec[] {
-  const allowed = new Set<string>(["check_availability", "escalate_to_human"]);
+  const allowed = new Set<string>(["check_availability", "offer_callback"]);
   // Booking needs someone to book, and a time they picked.
   if (args.hasName && args.hasPhone && args.offeredSlot) allowed.add("book_appointment");
   return VOICE_TOOLS.filter((t) => allowed.has(t.name));
@@ -246,6 +246,38 @@ export async function* runVoiceTurn(opts: {
     }
   }
 
+  /**
+   * The caller is answering an offered callback.
+   *
+   * A handover only happens on an explicit yes. A no carries on normally, and
+   * anything ambiguous is treated as neither — stranding someone because
+   * "no, it's fine" was misread as agreement is the failure that matters here.
+   */
+  const lastOutbound = [...ordered].reverse().find((m) => m.direction === "outbound");
+  const callbackPending = Boolean(lastOutbound?.meta?.callbackOffered);
+
+  if (callbackPending && latestInbound) {
+    const answer = readAgreement(latestInbound.body);
+    if (answer === "yes") {
+      await executeTool(ctx, "escalate_to_human", {
+        reason: "caller accepted a callback", urgency: "soon",
+      });
+      const line = "Great — I'll have a colleague call you back shortly.";
+      await db.insert(messagesTable).values({
+        tenantId: tenant.id, conversationId: conversation.id,
+        direction: "outbound", channel: "voice", authorType: "ai",
+        body: line, status: "sent", meta: { handover: true },
+      });
+      yield { type: "sentence", text: line, msSinceStart: Date.now() - started };
+      yield { type: "escalated", reason: "caller accepted a callback" };
+      yield {
+        type: "done", fullText: line, latencyMs: Date.now() - started,
+        firstWordMs: Date.now() - started, provider: "handover", model: "n/a",
+      };
+      return;
+    }
+  }
+
   // Budget gate — a conversation this long belongs to a person.
   const aiTurns = ordered.filter((m) => m.direction === "outbound" && m.authorType === "ai").length;
   if (overBudget(aiTurns)) {
@@ -331,6 +363,7 @@ export async function* runVoiceTurn(opts: {
       "",
       "Never state a price, a time or a policy here — if they ask for one, say",
       "you'll check and stop.",
+      "Never invent a colleague's name. Say \"a colleague\" or \"someone from the team\".",
       spokenPrefix ? `\nYou have just said out loud: "${spokenPrefix}" — continue from there, do not repeat it.` : "",
     ].join("\n");
 
@@ -490,10 +523,27 @@ export async function* runVoiceTurn(opts: {
         const ms = Date.now() - t0;
         toolRecords.push({ name: call.name, input: call.input, output: result, ms });
         yield { type: "tool", name: call.name, ok: (result as { ok?: boolean }).ok !== false, ms };
-        if (call.name === "escalate_to_human") {
-          yield { type: "escalated", reason: String(call.input.reason ?? "agent decided") };
-        }
         llmHistory.push({ role: "tool", toolCallId: call.id, name: call.name, content: JSON.stringify(result) });
+
+        // A genuine handover ends the turn: the caller is told once and the
+        // agent stops. Continuing to generate after announcing a transfer is
+        // what produced "handed to a human" followed by more agent chatter.
+        if (call.name === "escalate_to_human") {
+          const line = "Let me get a colleague to call you back about that — someone will be in touch shortly.";
+          yield { type: "sentence", text: line, msSinceStart: Date.now() - started };
+          yield { type: "escalated", reason: String(call.input.reason ?? "agent decided") };
+          firstWordMs ??= Date.now() - started;
+          await db.insert(messagesTable).values({
+            tenantId: tenant.id, conversationId: conversation.id,
+            direction: "outbound", channel: "voice", authorType: "ai",
+            body: line, status: "sent", meta: { handover: true },
+          });
+          yield {
+            type: "done", fullText: line, latencyMs: Date.now() - started,
+            firstWordMs, provider: provider.id, model: provider.model,
+          };
+          return;
+        }
       }
     }
   } catch (err) {
@@ -558,7 +608,11 @@ export async function* runVoiceTurn(opts: {
       direction: "outbound", channel: "voice", authorType: "ai",
       body: storedText.trim(),
       status: verdict.allow ? "sent" : "held_for_review",
-      meta: verdict.allow ? {} : { holdReason: verdict.holdReason, alreadySpoken: true },
+      meta: {
+        ...(verdict.allow ? {} : { holdReason: verdict.holdReason, alreadySpoken: true }),
+        // Lets the next turn recognise a yes as accepting the callback.
+        ...(toolRecords.some((t) => t.name === "offer_callback") ? { callbackOffered: true } : {}),
+      },
     });
   }
 

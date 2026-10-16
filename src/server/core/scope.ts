@@ -35,6 +35,10 @@ const OFF_TOPIC_PATTERNS = [
   /\b(?:python|javascript|sql|code|function|algorithm)\b.*\b(?:write|fix|debug|explain)\b/i,
   /\bwhat(?:'s| is) \d+\s*[-+*/x]\s*\d+/i,
   /\b(?:recipe|football|cricket|movie|song|horoscope)\b/i,
+  // General advice the business has no standing to give.
+  /\bwhat (?:should|do) i (?:wear|eat|watch|read|buy)\b/i,
+  /\b(?:recommend|suggest) (?:a|an|some)\b(?!.*\b(?:technician|engineer|time|slot|appointment|service|unit|system|filter)\b)/i,
+  /\bwhat(?:'s| is) your (?:opinion|advice) (?:on|about)\b/i,
 ];
 
 /** Anything that plausibly belongs to a home-services enquiry. */
@@ -98,4 +102,25 @@ export const MAX_AI_TURNS = 20;
 
 export function overBudget(aiTurns: number): boolean {
   return aiTurns >= MAX_AI_TURNS;
+}
+
+
+/**
+ * Did the caller just agree to something?
+ *
+ * Used to turn an offered callback into a real one. Deliberately narrow: a
+ * handover that happens on a misread "no" strands the caller, so anything
+ * ambiguous is treated as neither and the conversation carries on.
+ */
+const AFFIRMATIVE = /^(?:yes|yeah|yep|yup|sure|ok|okay|please|please do|that(?:'?s| is) (?:fine|great|good)|go ahead|sounds good|alright|why not|definitely|absolutely)\b/i;
+const NEGATIVE = /^(?:no|nope|nah|not (?:really|now|yet)|that(?:'?s| is) (?:ok|okay|fine)[, ]*(?:i'?m fine|no thanks)?|don'?t|no thanks|i'?m (?:good|fine|okay))\b/i;
+
+export type Agreement = "yes" | "no" | "unclear";
+
+export function readAgreement(text: string): Agreement {
+  const t = text.trim();
+  if (!t) return "unclear";
+  if (NEGATIVE.test(t)) return "no";
+  if (AFFIRMATIVE.test(t)) return "yes";
+  return "unclear";
 }

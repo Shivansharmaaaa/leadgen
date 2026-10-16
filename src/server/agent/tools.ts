@@ -159,6 +159,23 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
     strict: true,
   },
   {
+    name: "offer_callback",
+    description:
+      "Offer to have a colleague call the customer back about something you " +
+      "cannot answer or do. This does NOT transfer them — it asks whether they " +
+      "want a callback, and nothing happens unless they say yes. Use it when " +
+      "you are out of your depth, not for ordinary questions you can answer.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "What the colleague would be calling about." },
+      },
+      required: ["reason"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: "escalate_to_human",
     description:
       "Hand this conversation to a human and stop replying. Use ONLY for: a legal " +
@@ -215,6 +232,7 @@ export async function executeTool(
     case "record_consent": return recordConsent(ctx, input);
     case "remember": return storeMemory(ctx, input);
     case "escalate_to_human": return escalate(ctx, input);
+    case "offer_callback": return offerCallback(ctx, input);
     default: return { ok: false, error: `unknown tool ${name}` };
   }
 }
@@ -521,5 +539,31 @@ async function storeMemory(ctx: AgentContext, input: Record<string, unknown>): P
   return {
     ok: true,
     stored: res.unchanged ? "already known" : res.superseded ? "updated" : "new",
+  };
+}
+
+/**
+ * Offering a callback is not the same as making one.
+ *
+ * Unilaterally announcing "I'm handing you to a human" over a question the
+ * agent could have answered strands the caller: nobody is actually on the
+ * line, and the conversation is over. This asks first, and only a yes from
+ * the caller turns into a real handover.
+ */
+async function offerCallback(ctx: AgentContext, input: Record<string, unknown>): Promise<ToolResult> {
+  await db.insert(events).values({
+    tenantId: ctx.tenant.id,
+    type: "callback_offered",
+    conversationId: ctx.conversationId,
+    contactId: ctx.contactId,
+    payload: { reason: String(input.reason) },
+  });
+  return {
+    ok: true,
+    offered: true,
+    instruction:
+      "Ask the caller, in one short sentence, whether they would like a colleague " +
+      "to call them back about this. Do NOT say you are transferring them, and do " +
+      "NOT end the conversation. Wait for their answer.",
   };
 }
