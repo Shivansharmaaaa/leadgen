@@ -6,24 +6,41 @@ contains and what recognisers get wrong: numbers, times, brand names, a
 street address, a spelled-out phone number.
 
 Synthetic speech is cleaner than a real caller on a phone line, so treat the
-WER as a floor, not a forecast. Latency is the real number.
+WER as a floor, not a forecast — real accents, line noise and crosstalk will
+raise it. Latency is the number that carries over.
 """
 import io, json, re, time, urllib.request, wave
 import numpy as np
 
+# (what Kokoro says, what a correct transcript should read)
+#
+# Kept separate on purpose. The first version scored against the spoken form,
+# so "six one seven, five five five, zero one eight eight" transcribed as
+# "617-555-0188" counted as 77% wrong — penalising the model for writing a
+# phone number the way a transcript should. Numbers are scored in written form.
 SENTENCES = [
-    "Hi, my air conditioner is blowing warm air and the house is eighty four degrees.",
-    "Can someone come out tomorrow morning around nine?",
-    "My number is six one seven, five five five, zero one eight eight.",
-    "It's a Carrier unit, installed in twenty nineteen.",
-    "The furnace keeps short cycling, on and off every few minutes.",
-    "I'm at fourteen eighty Dorchester Avenue in Quincy.",
-    "Eighty nine dollars just to look at it seems a bit steep.",
-    "Actually, wait, can we do Thursday afternoon instead?",
+    ("Hi, my air conditioner is blowing warm air and the house is eighty four degrees.",
+     "Hi, my air conditioner is blowing warm air and the house is 84 degrees."),
+    ("Can someone come out tomorrow morning around nine?",
+     "Can someone come out tomorrow morning around 9?"),
+    ("My number is six one seven, five five five, zero one eight eight.",
+     "My number is 617-555-0188."),
+    ("It's a Carrier unit, installed in twenty nineteen.",
+     "It's a Carrier unit, installed in 2019."),
+    ("The furnace keeps short cycling, on and off every few minutes.",
+     "The furnace keeps short cycling, on and off every few minutes."),
+    ("I'm at fourteen eighty Dorchester Avenue in Quincy.",
+     "I'm at 1480 Dorchester Avenue in Quincy."),
+    ("Eighty nine dollars just to look at it seems a bit steep.",
+     "$89 just to look at it seems a bit steep."),
+    ("Actually, wait, can we do Thursday afternoon instead?",
+     "Actually, wait, can we do Thursday afternoon instead?"),
 ]
 
 def norm(t: str) -> list[str]:
-    return re.sub(r"[^a-z0-9 ]", " ", t.lower()).split()
+    # Case and punctuation are not errors; "617-555-0188" and "617 555 0188"
+    # are the same number.
+    return re.sub(r"[^a-z0-9 ]", " ", t.lower().replace("-", " ")).split()
 
 def wer(ref: list[str], hyp: list[str]) -> float:
     d = np.zeros((len(ref) + 1, len(hyp) + 1), dtype=int)
@@ -51,15 +68,15 @@ def transcribe(pcm: np.ndarray) -> dict:
     return json.loads(urllib.request.urlopen(req, timeout=60).read())
 
 total_err, total_words, rows = 0.0, 0, []
-for s in SENTENCES:
-    pcm = speak(s)
+for spoken, expected in SENTENCES:
+    pcm = speak(spoken)
     t0 = time.time()
     r = transcribe(pcm)
     rt = (time.time() - t0) * 1000
-    ref, hyp = norm(s), norm(r["text"])
+    ref, hyp = norm(expected), norm(r["text"])
     e = wer(ref, hyp)
     total_err += e * len(ref); total_words += len(ref)
-    rows.append((e, r["ms"], rt, r["seconds"], s, r["text"]))
+    rows.append((e, r["ms"], rt, r["seconds"], expected, r["text"]))
 
 print(f"{'WER':>5} {'model':>6} {'round':>6} {'audio':>6}")
 for e, ms, rt, sec, ref, hyp in rows:

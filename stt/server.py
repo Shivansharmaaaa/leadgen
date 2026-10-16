@@ -15,7 +15,7 @@ consumes, so there is no decode step, no temp file and no ffmpeg subprocess
 on every turn — the library's own transcribe() path does all three.
 """
 import json, os, sys, threading, time, warnings
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 warnings.filterwarnings("ignore")
 import numpy as np
@@ -32,13 +32,29 @@ _t = time.time()
 MODEL = from_pretrained(MODEL_PATH)
 assert MODEL.preprocessor_config.sample_rate == SAMPLE_RATE, "model expects a different rate"
 
+
+
+def logmel(pcm32: "mx.array") -> "mx.array":
+    """
+    Mel features, computed in float32 and only then cast for the model.
+
+    get_logmel views the STFT's complex64 output as the INPUT dtype and pairs
+    adjacent values back into magnitudes. That is only correct for float32:
+    with bfloat16 input the view quadruples the width and the pairing leaves
+    514 bins against a 257-bin filterbank, and the matmul fails.
+    """
+    return get_logmel(pcm32, MODEL.preprocessor_config).astype(mx.bfloat16)
+
+
 # Warm the graph on a second of silence so the first real call is not slow.
-_warm = mx.zeros((SAMPLE_RATE,), dtype=mx.bfloat16)
-MODEL.generate(get_logmel(_warm, MODEL.preprocessor_config))
+MODEL.generate(logmel(mx.zeros((SAMPLE_RATE,), dtype=mx.float32)))
 print(f"[stt] ready in {time.time() - _t:.1f}s", flush=True)
 
-# Same constraint as the TTS service: Metal must not be driven from several
-# threads at once.
+# MLX streams are thread-local: the model must be called from the thread that
+# loaded it, or every request fails with "There is no Stream(cpu, 1) in current
+# thread". So this service is deliberately single-threaded (HTTPServer, not
+# ThreadingHTTPServer) and serves from the main thread. That costs nothing —
+# GPU work is serial regardless — and the lock below stays as a guard.
 _GPU_LOCK = threading.Lock()
 
 
@@ -50,9 +66,7 @@ def transcribe_pcm(raw: bytes) -> dict:
 
     t0 = time.time()
     with _GPU_LOCK:
-        audio = mx.array(pcm).astype(mx.bfloat16)
-        mel = get_logmel(audio, MODEL.preprocessor_config)
-        result = MODEL.generate(mel)[0]
+        result = MODEL.generate(logmel(mx.array(pcm, dtype=mx.float32)))[0]
     ms = int((time.time() - t0) * 1000)
     return {"text": result.text.strip(), "seconds": round(seconds, 2), "ms": ms}
 
@@ -97,4 +111,4 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"[stt] listening on http://127.0.0.1:{PORT}", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
