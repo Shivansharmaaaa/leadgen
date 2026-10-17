@@ -133,6 +133,7 @@ Voice commits tonight: `8ff9a87` (hear in context, echo, products), `955ba52` (f
 - [ ] "Please don't call me again" should get the opt-out confirmation (`b9341e9`), and a bare "stop" while it talks should only interrupt it. Then "don't call me, text me instead" should go to the agent, not opt you out
 
 **Not started / parked**
+- [x] More natural voice / cloning audition (Voice Studio session, 17 Oct). Same 6 lines, time per line and Parakeet WER: Kokoro 0.3–0.9 s, 0%; OmniVoice designed voice 2.2 s, 1%; at 8 steps 1.3 s but garbles words; cloned voice 4.2 s, 0%. **Kokoro stays the live engine on this Mac.** Cloning needs an NVIDIA GPU server to be fast enough for calls. The delivery planner already renders for OmniVoice (`toReferenceClip`) for when that exists
 - [x] Kokoro TTS (:8787) and Parakeet STT (:8789) are running again now that the LoRA run is done (`npm run tts`, `npm run stt`)
 - [ ] Moshi in the chat tier: model is in `models/moshi/` (q4), standalone demo works on :8998 (`moshi/.venv`), not wired into the app. Not running now
 - [ ] PDF with diagrams explaining everything built (you parked this)
