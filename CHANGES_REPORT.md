@@ -162,6 +162,7 @@ found by replaying calls against the live `/api/voice/stream` route.
 - **Emergencies are treated as urgent:** `emergency_urgency` went from 2/6 to **5/5**.
 - **Offering concrete times on a call:** `two_specific_times` went from 0/3 to **3/3**.
 - **The product facts don't hurt:** A/B, 3 runs each on 60 checks: facts ON 58.0 average, OFF 56.3.
+- **Full eval: 60/60 twice** once text replies also read the calendar first (`8137db0`).
 
 ## What was wrong, and what changed
 
@@ -186,10 +187,11 @@ These are wording problems from the 3B model, not wrong bookings:
 - "My name is Alex, and I'll be the one servicing your heat pump."
 - "Saturday of next week" said for tomorrow.
 
-The webchat pipeline still lets the model make up times
-(`contact_capture` 4/6, `objection_other_quotes` 4/6). That's the same
-cause the voice fix addressed, and porting it is waiting on the training
-session, since `runtime.ts` is shared.
+**Text replies too** (`8137db0`): the SMS, webchat and email pipeline was
+making up times the same way (`contact_capture` and `objection_other_quotes`
+each failed 4 of 6 runs). It now reads the calendar before the model on every
+turn. **Full eval: 60/60 on two runs in a row**, the first clean runs of the
+night (it scored 54–60 before); 437/437 checks in `npm test`.
 
 # Update: hearing in context — 17 October 2026
 

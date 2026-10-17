@@ -114,7 +114,7 @@ Voice commits tonight: `8ff9a87` (hear in context, echo, products), `955ba52` (f
 - [x] `npm run eval` on `8ff9a87`: 88% (53/56) vs 92% (54/56) baseline. Voice `emergency_urgency` was our regression (the scheduling gate withheld the tool), fixed in `955ba52`
 - [x] Eval A/B on `d913e00`, 3 runs each, 60 checks: product facts ON 56/58/60 (mean 58.0), OFF 57/58/54 (mean 56.3). The facts don't cause the webchat failures; those happen as often without them. Facts stay
 - [x] `emergency_urgency` failed 4 of 6 A/B runs (sympathy, no urgency). Urgency is now recognised by rule and told to the model (`b0d9595`): 5/5
-- [ ] Webchat `contact_capture` (4/6) and `objection_other_quotes` (4/6): the text pipeline's 3B model offers times without calling check_availability, and Gate 2 holds the reply. Same cause as voice; the fix there was reading the calendar before generation (`3222aec`). `runtime.ts` is shared, so the training session has been asked before porting
+- [x] The text pipeline (SMS, webchat, email) reads the calendar before the model on every turn (`8137db0`), as voice does. Webchat `contact_capture` and `objection_other_quotes` had failed 4 of 6 runs; full eval now **60/60 twice**. npm test 437/437
 
 **Needs you to test live** (`localhost:3100/voice`)
 - [ ] A full booking: "I need someone to service my heat pump", pick one of the two times, give your name and number. You should hear the same time back, and an appointment should appear at that time (`3222aec`, `d913e00`)
