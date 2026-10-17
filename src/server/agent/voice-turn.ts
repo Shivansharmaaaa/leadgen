@@ -4,7 +4,9 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound, disclosureReply, handoffReply, safetyReply } from "@/server/core/guardrails";
+import {
+  screenInbound, screenOutbound, disclosureReply, handoffReply, safetyReply, softenIntensifiers,
+} from "@/server/core/guardrails";
 import { recall } from "@/server/memory/store";
 import { buildSystemPrompt } from "./prompt";
 import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
@@ -142,16 +144,14 @@ const BOOKING_CLAIM = /\b(?:(?:i|we)(?:'ve| have)\s+(?:got\s+you\s+|now\s+)?(?:b
  * sentence rather than letting the whole reply be held ("We can definitely
  * send someone" → "We can send someone").
  */
-function screenSentence(sentence: string, booked: boolean): string | null {
+export function screenSentence(sentence: string, booked: boolean): string | null {
   if (!booked && BOOKING_CLAIM.test(sentence)) return null;
-  const out = sentence
-    // A template slot the model left unfilled: "with Technician [Name]".
-    .replace(/\s*(?:with\s+)?(?:(?:our\s+)?(?:technician|tech|engineer|mr\.?|ms\.?|mrs\.?|dr\.?)\s+)?\[[^\]]*\]/gi, "")
-    .replace(/^(?:definitely|certainly|absolutely)\b\s*([,!.])?\s*/i, (_m, p: string | undefined) => (p === "," ? "Sure, " : "Sure. "))
-    .replace(/\s*\b(?:definitely|certainly)\b,?/gi, "")
-    .replace(/\bSure\.\s*$/, "Sure.")
-    .trim();
-  return out || null;
+  // A template slot the model left unfilled: "with Technician [Name]".
+  const filled = sentence.replace(
+    /\s*(?:with\s+)?(?:(?:our\s+)?(?:technician|tech|engineer|mr\.?|ms\.?|mrs\.?|dr\.?)\s+)?\[[^\]]*\]/gi, "",
+  );
+  // The same softening Gate 2's text path uses, so the two cannot drift.
+  return softenIntensifiers(filled) || null;
 }
 
 /** Split a token stream into speakable sentences as soon as each completes. */
