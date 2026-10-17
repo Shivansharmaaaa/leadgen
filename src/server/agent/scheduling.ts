@@ -1,4 +1,5 @@
 import { executeTool, type AgentContext } from "./tools";
+import { SPOKEN_TIME } from "@/server/voice/delivery";
 import type { ToolCallRecord } from "@/server/db";
 
 /**
@@ -46,7 +47,8 @@ const AGENT_BOOKING_OFFER = /\bset up (?:that|a) visit|\bbook (?:you|a|that)\b|\
 
 /** Has a time already been put in front of this customer? Only then can they have chosen one. */
 export function slotOffered(ordered: Msg[]): boolean {
-  return ordered.some((m) => m.direction === "outbound" && /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i.test(m.body));
+  // Digits or words: the 3B often says "eleven o'clock in the morning".
+  return ordered.some((m) => m.direction === "outbound" && SPOKEN_TIME.test(m.body));
 }
 
 export function schedulingInPlay(ordered: Msg[]): boolean {

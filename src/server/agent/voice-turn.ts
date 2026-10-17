@@ -17,7 +17,7 @@ import { screenScope, overBudget, MAX_AI_TURNS, readAgreement } from "@/server/c
 import { resolveFastPath, cleanContinuation } from "./fast-path";
 import { routeTurn } from "./router";
 import { outboundNote, type OutboundCall } from "./outbound";
-import { stripStageDirections } from "@/server/voice/delivery";
+import { stripStageDirections, SPOKEN_TIME, spokenTimes } from "@/server/voice/delivery";
 import { FAULT, slotOffered, schedulingInPlay as inPlay, openSlotsNote } from "./scheduling";
 
 /**
@@ -140,23 +140,21 @@ export type VoiceEvent =
 /** A pick from offered times; shared with name capture, which trusts a name said alongside one. */
 const CHOICE = TIME_PICK;
 const AFFIRM = /^(?:yes|yeah|yep|sure|ok(?:ay)?|perfect|great|sounds good|that works|book it|let'?s do it|go ahead)\b/i;
-const TIME_NAMED = /\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b/gi;
-
 /**
  * Has the caller picked a time since times were first offered? Not only in
  * the latest turn: "the first one please", then "my name is Riley, 617…" is
- * a pick followed by the details booking needs.
+ * a pick followed by the details booking needs. Offers count in words too
+ * ("eleven o'clock in the morning, or half past two").
  */
 function choseATime(ordered: { direction: string; body: string }[]): boolean {
-  const firstOffer = ordered.findIndex((m) => m.direction === "outbound" && new RegExp(TIME_NAMED).test(m.body));
+  const firstOffer = ordered.findIndex((m) => m.direction === "outbound" && SPOKEN_TIME.test(m.body));
   if (firstOffer < 0) return false;
   return ordered.slice(firstOffer + 1).some((m, i, rest) => {
     if (m.direction !== "inbound") return false;
     if (CHOICE.test(m.body)) return true;
     // "Yes" to a single time the agent had just named is choosing it.
     const before = i > 0 ? rest[i - 1] : ordered[firstOffer];
-    return AFFIRM.test(m.body.trim()) && before.direction === "outbound" &&
-      (before.body.match(TIME_NAMED) ?? []).length === 1;
+    return AFFIRM.test(m.body.trim()) && before.direction === "outbound" && spokenTimes(before.body).length === 1;
   });
 }
 

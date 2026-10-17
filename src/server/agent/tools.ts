@@ -307,7 +307,9 @@ async function checkAvailability(ctx: AgentContext, input: Record<string, unknow
   };
 }
 
-/** Did the agent say this time ("9am", "3:00 PM", "nine thirty" aside) in its last few replies? */
+const HOUR_WORDS = ["twelve", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
+
+/** Did the agent say this time, in digits or words, in its last few replies? */
 async function agentSaid(conversationId: string, at: Date, tz: string): Promise<boolean> {
   const recent = await db.query.messages.findMany({
     columns: { body: true },
@@ -315,10 +317,20 @@ async function agentSaid(conversationId: string, at: Date, tz: string): Promise<
     orderBy: desc(messages.createdAt),
     limit: 6,
   });
-  const h = formatInTimeZone(at, tz, "h");
+  const h = Number(formatInTimeZone(at, tz, "h"));
   const m = formatInTimeZone(at, tz, "mm");
   const ap = formatInTimeZone(at, tz, "a").toLowerCase()[0]; // "a" or "p"
-  const said = new RegExp(`\\b${h}${m === "00" ? "(?::00)?" : `:${m}`}\\s*${ap}\\.?\\s?m\\b`, "i");
+  // Digits ("3pm", "3:00 PM") or words ("three o'clock", "three p.m.", "three
+  // in the afternoon", "half past three", "three thirty"): the 3B says both.
+  const word = HOUR_WORDS[h % 12];
+  const part = ap === "a" ? "morning" : "(?:afternoon|evening)";
+  const minuteWord: Record<string, string> = { "15": "fifteen", "30": "thirty", "45": "forty[- ]five" };
+  const forms = [`\\b${h}${m === "00" ? "(?::00)?" : `:${m}`}\\s*${ap}\\.?\\s?m\\b`];
+  if (m === "00") forms.push(`\\b${word}\\s+(?:o'?clock|${ap}\\.?\\s?m\\b|in the ${part})`);
+  if (minuteWord[m]) forms.push(`\\b${word}[- ]${minuteWord[m]}\\b`);
+  if (m === "30") forms.push(`\\bhalf past ${word}\\b`);
+  if (m === "15") forms.push(`\\bquarter past ${word}\\b`);
+  const said = new RegExp(forms.join("|"), "i");
   return recent.some((r) => said.test(r.body));
 }
 

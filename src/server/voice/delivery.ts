@@ -112,6 +112,14 @@ const TIME = new RegExp(String.raw`\b${DAY}(?:` + [
   String.raw`(?:half|quarter)\s+(?:past|to)\s+${HOUR}\b(?:\s+${DAYPART})?`,
   String.raw`${HOUR}\s+(?:${MERIDIEM}|${DAYPART})`,
 ].join("|") + String.raw`)(?:\s+${DAYPART})?|\bat\s+(?:noon|midday)\b`, "gi");
+/**
+ * Any time as said aloud, digits or words. Shared with the booking gates
+ * (agent/scheduling.ts, voice-turn.ts): a slot offered as "eleven o'clock in
+ * the morning" is still an offer. Not global, so .test() has no lastIndex.
+ */
+export const SPOKEN_TIME = new RegExp(TIME.source, "i");
+/** Every time mentioned in `text`. */
+export const spokenTimes = (text: string): string[] => text.match(TIME) ?? [];
 /** "$89", "£1,450", "eighty-nine dollars", "a hundred and fifty dollars", "ninety-five pounds an hour". */
 const MONEY = /[$£€]\s?\d[\d,]*(?:\.\d{2})?|\b(?:(?:a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and|[-\s])+)\s(?:dollars|pounds|euros|bucks)\b/gi;
 const PHONE = /(?:\+?\d[\d\s().-]{7,}\d)/g;
