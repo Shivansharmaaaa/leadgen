@@ -1,8 +1,17 @@
 import { eq, desc } from "drizzle-orm";
-import { db, tenants, contacts, contactIdentities, conversations, messages, leads, appointments, events, agentRuns } from "@/server/db";
+import {
+  db, tenants, contacts, contactIdentities, conversations, messages, leads, appointments, events, agentRuns,
+  locations, knowledgeFacts, knowledgeDocs, staff,
+} from "@/server/db";
 import { handleInbound } from "@/server/core/ingest";
 import { getProvider } from "@/server/agent/providers";
 import type { InboundMessage } from "@/server/core/types";
+
+// .env may hold live Twilio and SMTP credentials; a smoke run proves the
+// pipeline and must never text or email anyone.
+delete process.env.TWILIO_ACCOUNT_SID;
+delete process.env.TWILIO_AUTH_TOKEN;
+delete process.env.SMTP_HOST;
 
 const line = (s = "") => console.log(s);
 const rule = () => line("─".repeat(72));
@@ -33,13 +42,15 @@ async function say(msg: InboundMessage, label: string) {
 }
 
 async function main() {
-  const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, "northside-hvac") });
-  if (!tenant) throw new Error("run `npm run seed` first");
+  const source = await db.query.tenants.findFirst({ where: eq(tenants.slug, "northside-hvac") });
+  if (!source) throw new Error("run `npm run seed` first");
 
-  // Clean slate so each run is comparable.
-  await db.delete(contacts).where(eq(contacts.tenantId, tenant.id));
-  await db.delete(events).where(eq(events.tenantId, tenant.id));
-  await db.delete(agentRuns).where(eq(agentRuns.tenantId, tenant.id));
+  // Run against a fresh copy of the demo business, never the business itself:
+  // a clean slate here used to mean deleting every contact of northside-hvac,
+  // which wiped eval history and anyone else's test data in a shared
+  // database. The copy is replaced on each run and left for inspecting
+  // (TENANT_SLUG=northside-hvac-smoke).
+  const tenant = await cloneTenant(source, "northside-hvac-smoke");
 
   const provider = getProvider();
   rule();
@@ -155,3 +166,24 @@ async function main() {
 }
 
 main().catch((e) => { console.error("\n✗ FAILED:", e); process.exit(1); });
+
+/** A copy of a tenant's set-up (settings, locations, knowledge, team), with no activity. */
+async function cloneTenant(src: typeof tenants.$inferSelect, slug: string) {
+  await db.delete(tenants).where(eq(tenants.slug, slug));
+  const { id: _id, createdAt: _c, slug: _s, ...rest } = src;
+  const [copy] = await db.insert(tenants).values({ ...rest, slug, name: `${src.name} (smoke test)` }).returning();
+  const strip = <T extends { id: string; tenantId: string }>(rows: T[]) =>
+    rows.map(({ id: _i, ...r }) => ({ ...r, tenantId: copy.id }));
+  const [locs, facts, docs, team] = await Promise.all([
+    db.query.locations.findMany({ where: eq(locations.tenantId, src.id) }),
+    db.query.knowledgeFacts.findMany({ where: eq(knowledgeFacts.tenantId, src.id) }),
+    db.query.knowledgeDocs.findMany({ where: eq(knowledgeDocs.tenantId, src.id) }),
+    db.query.staff.findMany({ where: eq(staff.tenantId, src.id) }),
+  ]);
+  if (locs.length) await db.insert(locations).values(strip(locs));
+  if (facts.length) await db.insert(knowledgeFacts).values(strip(facts));
+  if (docs.length) await db.insert(knowledgeDocs).values(strip(docs));
+  // The team without phones: a smoke run must never page a real person.
+  if (team.length) await db.insert(staff).values(strip(team).map((m) => ({ ...m, phone: null })));
+  return copy;
+}
