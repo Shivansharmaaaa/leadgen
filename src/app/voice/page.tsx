@@ -304,7 +304,9 @@ export default function VoicePage() {
     // plan, a safety warning first of all. A rate within 3% isn't worth a miss.
     const speed = plan && !opener && Math.abs(plan.rate - 1) >= 0.03
       ? Math.round(engineSpeed.current * plan.rate * 100) / 100 : undefined;
-    const pending = fetchSpeech(text, speed, plan?.exaggeration);
+    // Same for emotion: Chatterbox pre-renders the openers at the user's own
+    // setting (0.7), and a planned 0.75 would miss that cache too.
+    const pending = fetchSpeech(text, speed, opener ? undefined : plan?.exaggeration);
     let synthMs = 0;
     void pending.then(() => { synthMs = Math.round(performance.now() - queuedAt); });
     chain.current = chain.current.then(async () => {
