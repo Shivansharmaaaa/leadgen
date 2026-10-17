@@ -61,9 +61,14 @@ export async function passwordMatches(given: string, expected: string): Promise<
   return diff === 0;
 }
 
-/** Pages and APIs only the business may see. Public surfaces are listed in middleware. */
+/**
+ * Pages and APIs only the business may see. Public surfaces are listed in
+ * middleware. The browser voice demo is here too: it runs the model and the
+ * speech server for whoever opens it, and writes to the database.
+ */
 export function isProtected(pathname: string): boolean {
-  return /^\/(?:dashboard|inbox|settings)(?:\/|$)/.test(pathname) || /^\/api\/inbox(?:\/|$)/.test(pathname);
+  return /^\/(?:dashboard|inbox|settings|voice)(?:\/|$)/.test(pathname) ||
+    /^\/api\/(?:inbox|voice)(?:\/|$)/.test(pathname);
 }
 
 /** Where to go after signing in: a path on this site only, never "//evil.com". */

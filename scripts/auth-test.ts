@@ -54,6 +54,9 @@ async function main() {
   check("inbox API with a session, same site → through", passes(await middleware(req("/api/inbox", { method: "POST", cookie: token, origin: "http://app.local" }))));
   check("inbox API with a session from another site → 403", (await middleware(req("/api/inbox", { method: "POST", cookie: token, origin: "https://evil.example" }))).status === 403);
   check("the public chat API is not gated", passes(await middleware(req("/api/chat", { method: "POST" }))));
+  check("the browser voice demo needs sign-in once a password is set", (await middleware(req("/voice"))).status === 307 &&
+    (await middleware(req("/api/voice/turn", { method: "POST" }))).status === 401);
+  check("Twilio's voice webhook stays public (it has its own signature check)", passes(await middleware(req("/api/webhooks/twilio/voice", { method: "POST" }))));
   check("lead intake is not gated (it has its own key)", passes(await middleware(req("/api/leads", { method: "POST" }))));
 
   console.log("\nMiddleware, no password");

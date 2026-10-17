@@ -5,9 +5,10 @@ import { isProtected, SESSION_COOKIE, verifySession } from "@/server/auth/sessio
  * Guards the owner-facing surfaces (dashboard, inbox, settings, inbox API).
  *
  * Public by design, each with its own protection: /api/chat (rate limits),
- * /api/leads (intake key), /api/webhooks/* (provider signatures), the chat
- * widget, and /login. The /voice demo and /api/voice/* are left open for
- * local development and must be closed before a public deployment.
+ * /api/leads (intake key), /api/webhooks/* (provider signatures, including
+ * Twilio's voice webhook), the chat widget, /api/health and /login. The
+ * /voice demo and /api/voice/* are guarded like the dashboard: open in
+ * development without a password, behind sign-in once one is set.
  *
  * Without ADMIN_PASSWORD: open in development, refused in production — a
  * deployment that forgot the password must fail closed, not open.
@@ -41,5 +42,8 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/inbox/:path*", "/settings/:path*", "/api/inbox/:path*"],
+  matcher: [
+    "/dashboard/:path*", "/inbox/:path*", "/settings/:path*", "/voice/:path*",
+    "/api/inbox/:path*", "/api/voice/:path*",
+  ],
 };
