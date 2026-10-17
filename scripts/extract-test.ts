@@ -73,7 +73,19 @@ asked("My first name is Billy. My last name is Beane. b e a n e.", ASKED, "Billy
 asked("Chester parrot Chester parrot, p a r r o t.", ASKED, "Chester Parrot");
 asked("Larry Larry Phillips.", ASKED, "Larry Phillips");
 asked("Sure, Tori t o r i Childs c h i l d s. Yes, 215-884-1482.", ASKED, "Tori Childs");
-is("Mike Jones 281-330-8004.", null);
+// Unasked, a full name said with a number or a pick is taken (a lone word is not).
+is("Mike Jones 281-330-8004.", "Mike Jones");
+
+console.log("\nA name said in the same breath as a pick or a number");
+is("Tuesday at 9, please. Carlos Mendes.", "Carlos Mendes");
+is("Tuesday at 9 works. Omar Haddad. 617 555 0139.", "Omar Haddad");
+is("The earlier one works. Sure, Megan m e g a n Doyle d o y l e. Yes, 617 555 0147.", "Megan Doyle");
+is("Tuesday at 9, please. Thanks.", null);
+is("The first one. Perfect.", null);
+is("Tuesday at 9. That works.", null);
+is("My furnace died today. Ugh.", null);
+is("Tuesday at 9, please. Carlos.", null);
+asked("The first one. Carlos.", "Great, and can I get your name?", "Carlos");
 
 console.log("\nNumbers");
 const us = extractIdentifiers("call me on 617 555 0134", "US").phones;

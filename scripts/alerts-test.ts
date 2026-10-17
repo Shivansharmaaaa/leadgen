@@ -42,6 +42,13 @@ async function main() {
   check("'how much does it cost to talk to someone?' is a price question", !s("How much does it cost to talk to someone?").escalate);
   check("'what do you charge to speak to someone about…?' is too", !s("What do you charge to speak to someone about a study permit?").escalate);
   check("'I want to talk to someone' still escalates", s("I want to talk to someone").escalate);
+  check("'a hundred and fifty dollars just to talk to someone?' is a price objection",
+    !s("A hundred and fifty dollars just to talk to someone? That's steep.").escalate);
+  check("'$150 just to talk to someone?' is a price objection", !s("$150 just to talk to someone?").escalate);
+  check("'that much to speak to someone?' is a price objection", !s("That much to speak to someone?").escalate);
+  check("'too expensive, let me talk to a person' still escalates",
+    s("It's too expensive, let me talk to a person.").escalate);
+  check("'can I talk to someone' still escalates", s("Can I talk to someone about the price?").escalate);
   check("'it costs too much, let me talk to a person' still escalates", s("It costs too much, let me talk to a person").escalate);
   check("tenant trigger 'insurance claim' still escalates", s("this is an insurance claim").escalate);
   check("'I smell gas' is a safety escalation", s("I smell gas in the basement").safety === true);

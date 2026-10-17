@@ -1,4 +1,5 @@
 import { desc, eq } from "drizzle-orm";
+import { TIME_PICK } from "@/server/core/extract";
 import {
   db, agentRuns, messages as messagesTable, conversations, contacts, locations, tenants,
   type ToolCallRecord,
@@ -16,6 +17,7 @@ import { screenScope, overBudget, MAX_AI_TURNS, readAgreement } from "@/server/c
 import { resolveFastPath, cleanContinuation } from "./fast-path";
 import { routeTurn } from "./router";
 import { outboundNote, type OutboundCall } from "./outbound";
+import { stripStageDirections } from "@/server/voice/delivery";
 import { FAULT, slotOffered, schedulingInPlay as inPlay, openSlotsNote } from "./scheduling";
 
 /**
@@ -134,8 +136,8 @@ export type VoiceEvent =
   | { type: "done"; fullText: string; latencyMs: number; firstWordMs: number | null; provider: string; model: string }
   | { type: "error"; message: string };
 
-/** A pick from offered times: a day, a time, an ordinal. "What times do you have?" is not one. */
-const CHOICE = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|noon)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.|o'?clock)\b|\bat\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:am|pm|o'?clock|thirty)\b|\b(?:first|second|earlier|later|other)\s+one\b|\beither\b/i;
+/** A pick from offered times; shared with name capture, which trusts a name said alongside one. */
+const CHOICE = TIME_PICK;
 const AFFIRM = /^(?:yes|yeah|yep|sure|ok(?:ay)?|perfect|great|sounds good|that works|book it|let'?s do it|go ahead)\b/i;
 const TIME_NAMED = /\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b/gi;
 
@@ -163,6 +165,7 @@ const BUSY = /\b(?:busy|bad time|not (?:a good time|now|right now)|call (?:me )?
 /** The caller says it is urgent, in so many words. */
 const URGENT = /\b(?:emergency|urgent(?:ly)?|asap|as soon as possible|right away|straight away|immediately)\b/i;
 /** Someone at home a fault is dangerous for: with FAULT, that makes it urgent. */
+export const isUrgent = (heard: string) => URGENT.test(heard) || (FAULT.test(heard) && VULNERABLE.test(heard));
 const VULNERABLE = /\b(?:bab(?:y|ies)|infants?|newborn|toddlers?|kids?|children|elderly|grand(?:ma|pa|mother|father|parents?)|pregnant|sick|disabled|oxygen|freezing|heat ?wave)\b/i;
 
 /**
@@ -179,7 +182,9 @@ const BOOKING_CLAIM = /\b(?:(?:i|we)(?:'ve| have)\s+(?:got\s+you\s+|now\s+)?(?:b
  * sentence rather than letting the whole reply be held ("We can definitely
  * send someone" → "We can send someone").
  */
-export function screenSentence(sentence: string, booked: boolean): string | null {
+export function screenSentence(raw: string, booked: boolean): string | null {
+  // "[laughs]", "(sighs)", "*chuckles*": Kokoro and Twilio <Say> read them aloud.
+  const sentence = stripStageDirections(raw);
   if (!booked && BOOKING_CLAIM.test(sentence)) return null;
   // A template slot the model left unfilled: "with Technician [Name]".
   const filled = sentence.replace(
@@ -662,7 +667,7 @@ export async function* runVoiceTurn(opts: {
   if (outboundCall) notes.push(outboundNote(tenant.settings ?? {}, outboundCall));
 
   const heard = latestInbound?.body ?? "";
-  if (URGENT.test(heard) || (FAULT.test(heard) && VULNERABLE.test(heard))) {
+  if (isUrgent(heard)) {
     notes.push(
       "# Urgent\nThis caller has an urgent problem. Say plainly that you'll treat it as urgent " +
       "and get someone out as soon as possible, then offer the EARLIEST open slot. Do not ask " +

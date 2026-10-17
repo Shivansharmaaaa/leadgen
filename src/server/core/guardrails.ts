@@ -73,8 +73,14 @@ const HUMAN_REQUEST_RE = new RegExp(
  * "How much does it cost to talk to someone?" asks the price of a
  * consultation; it is a buying question, not a demand for a human. On an
  * immigration line it was handed to staff, and the caller lost the booking.
+ * So is an amount: "A hundred and fifty dollars just to talk to someone?
+ * That's steep." is a price objection to answer, not a handoff.
  */
-const PRICE_OF_RE = /\b(?:cost|costs|charge|charges|fee|price|pay)\s+(?:me\s+|us\s+)?(?:anything\s+)?(?:to|for)\s+$/;
+const PRICE_OF_RE = new RegExp(
+  String.raw`(?:\b(?:cost|costs|charge|charges|fee|price|pay)\s+(?:me\s+|us\s+)?(?:anything\s+)?` +
+  String.raw`|(?:[$£€]\s?\d[\d,.]*|\b(?:dollars|bucks|pounds|quid|euros)|\b(?:that|so|this)\s+much)\s+(?:just\s+|only\s+)?)` +
+  String.raw`(?:to|for)\s+$`,
+);
 
 const ANGER_MARKERS = [
   "unacceptable", "ridiculous", "furious", "appalling", "disgusted",

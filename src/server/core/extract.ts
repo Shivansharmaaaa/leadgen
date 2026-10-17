@@ -69,7 +69,16 @@ const NOT_A_NAME = new Set([
   "international", "domestic", "overseas", "local", "new", "single", "married", "divorced", "retired",
   "pregnant", "unemployed", "self-employed", "permanent", "express", "currently", "already", "still",
   "you", "we", "they", "he", "she", "can", "be", "if",
+  // What ends "Tuesday at 9, please. Thanks." — a sign-off, never a person.
+  "thanks", "thank", "perfect", "works", "that", "this", "cheers", "lovely", "brilliant", "awesome",
+  "excellent", "wonderful", "fantastic", "cool", "bye", "goodbye", "hello", "hi", "hey", "ugh", "hmm",
+  "wow", "right", "alright", "done", "deal", "absolutely", "definitely", "exactly", "correct",
 ]);
+
+/** A pick from offered times: a day, a time, an ordinal. "What times do you have?" is not one. */
+export const TIME_PICK = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|noon)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.|o'?clock)\b|\bat\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:am|pm|o'?clock|thirty)\b|\b(?:first|second|earlier|later|other)\s+one\b|\beither\b/i;
+/** Seven or more digits: a phone number said with the name. */
+const PHONE_RUN = /\d(?:[\s().-]*\d){6,}/;
 
 const titleCase = (w: string) => w[0].toUpperCase() + w.slice(1).toLowerCase();
 
@@ -98,7 +107,32 @@ export function extractName(raw: string, opts: { lastAgentLine?: string | null }
     if (m[2] && !NOT_A_NAME.has(m[2].toLowerCase())) parts.push(m[2]);
     return parts.map(titleCase).join(" ");
   }
-  return asked ? bareName(text) : null;
+  if (asked) {
+    const bare = bareName(text);
+    if (bare) return bare;
+  }
+  if (asked || TIME_PICK.test(text) || PHONE_RUN.test(text)) return nameSentence(text, asked);
+  return null;
+}
+
+/**
+ * A name on a sentence of its own inside a longer turn: "Tuesday at 9,
+ * please. Carlos Mendes." Callers say the pick and the name in one breath,
+ * and without this the name was lost and booking was never offered. Asked
+ * for a name, one to three words will do. Unasked, only a full name (two or
+ * three capitalised words): a lone word volunteered unasked ("Ugh.") would
+ * be saved, and the route never replaces a saved name.
+ */
+function nameSentence(text: string, asked: boolean): string | null {
+  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+    if (TIME_PICK.test(sentence)) continue;
+    const name = bareName(sentence);
+    if (!name) continue;
+    if (asked) return name;
+    const words = name.split(" ");
+    if (words.length >= 2 && words.every((w) => new RegExp(`\\b${w}\\b`).test(sentence))) return name;
+  }
+  return null;
 }
 
 /** "First name Will", and "my last name is McCormick" after a first name. */
