@@ -1,3 +1,152 @@
+# Update: overnight — the conversion fine-tune, a complete lead-gen product, and the holes it exposed — 17 October 2026
+
+Asked for: continue the conversion training and the LoRA fine-tune through
+the night, then make this a complete lead-generation product: research what
+one needs, build it, test it, improve it, keep a running to-do list. The
+list, with every task's real outcome, is [`TODO.md`](TODO.md). Every number
+below comes from a run in this repo on the M3 Pro (18 GB).
+
+## At a glance
+
+- **Fine-tune:** trained through the night (286 min, 0.65 epoch, held-out loss 1.685 → 0.599). On held-out decisions it picks the right next step **97%** of the time against stock's 49%, with **0** premature bookings against 9. On 27 live-call scenarios it **ties stock (55/60)** and its turns are slower, so it should not replace the voice model yet. One of its live misses was taught by my training data; that can no longer happen.
+- **Product:** 17 features a lead-gen product needs that weren't here,
+  each with a test suite that runs with no model and sends nothing real —
+  **437 checks across 14 suites plus an import-order test, all passing
+  (`npm test`)**. `next build` passes with no warnings (run in
+  an isolated copy, since the voice session's dev server shares `.next`).
+- **Found and fixed on the way**, each live before tonight: STOP was never
+  honoured; the TCPA consent gate never ran; "I have an issue with my AC"
+  was handed to a human (`sue` inside `issue`); a handover sent the customer
+  nothing; someone reporting a gas smell was told "someone will call you
+  back"; the dashboard, inbox and inbox API had no authentication; a
+  cancelled booking could hide a confirmed one; jobs were never marked done
+  so review requests never went out; recurring jobs never recurred.
+
+## The fine-tune
+
+Llama 3.2 3B, LoRA+ (B at 16x), rank 16, all projections, lr 2e-4, 97 steps
+of 8 packed dialogues, 286 minutes at 128 tok/s on the M3 Pro. The set adds
+the conversion dialogues (objections answered with facts; "no" accepted
+without a second pitch) to SGD and the HVAC calls.
+
+Getting it to run took three fixes to the trainer, all now permanent: load
+the weights straight onto the GPU (the old load held two copies and was
+killed), hand freed GPU memory back after every backward (17 GB → 11 GB,
+57 → 128 tok/s), and checkpoint/resume so a sleep or power cut costs
+minutes. It ran uninterrupted.
+
+| | stock | untuned layout | LoRA |
+|---|---|---|---|
+| Held-out next action (74 decisions) | 49% | 65% | **97%** |
+| …with the right arguments | 35% | 65% | **96%** |
+| Premature bookings | 9 | 3 | **0** |
+| Live-call eval, 27 scenarios | 55/60 | — | 55/60 |
+| Turn latency p50 (live-call eval) | 2.7 s | — | 4.5 s |
+
+Read the two halves together. The held-out rows come from the same
+generators as the training set, so they show the behaviour was learnt
+(every objection handled, every "no" accepted, no pushy bookings). The
+live-call scenarios are hand-written and leak-checked, and there it ties.
+Two of the misses are shared and come from the voice router, not the
+weights. The LoRA's own misses: it said "definitely", which Gate 2 holds,
+because 44 of my training targets said "we can definitely help" (the build
+now refuses any target Gate 2 would hold), and it answered a no-heat
+emergency without urgency words.
+
+Held-out loss bottomed at step 50 (0.588) and the step-50 weights were
+overwritten; the trainer now keeps `best/`. Next run: about half an epoch,
+the rebuilt set, emergency replies that say it's being prioritised, and a
+live-call score above stock before it replaces `OLLAMA_VOICE_MODEL`. Full
+detail: [`finetune/README.md`](finetune/README.md); raw numbers in
+`reports/results/*overnight*` and `train_3b-conv-lp16.json`.
+
+## What a lead-gen product needs
+
+Surveyed Avoca, Sameday, Jobber's AI receptionist, Frontdesk and Nextiva.
+The shared core: answer every call and message instantly, text back missed
+calls, book into the calendar, confirm and remind, route emergencies to
+whoever is on call with the details, nurture old leads, score calls, and
+integrate with the CRM and lead sources. Speed decides it: leads contacted
+within five minutes are ~21x likelier to qualify, and most customers buy
+from whoever answers first.
+
+Built tonight (set up at `/settings`, checked with `npm run doctor`):
+
+| Feature | Commit | Test |
+|---|---|---|
+| Lead intake from forms, Zapier, LSA, Angi, Thumbtack, FB lead ads — consent *wording* checked | `990858b` | `intake:test` |
+| Appointment reminders; C/R by reply; never outside 8am–8pm | `1cf3078` | `reminders:test` |
+| Team alerts on every handover; emergencies to on-call at any hour; "1" claims it | `f7e472d` `c321c36` `d5b3102` | `alerts:test` |
+| Conversation scoring: outcome + what was missed | `f508c37` | `scoring:test` |
+| Dashboard: needs-attention, outcomes, lead sources with cost per booked job, form fixes, team alerts | `8543948` `e029cbe` | rendered |
+| Website chat widget + API | `b45446c` | `webchat:test` + browser |
+| Signed CRM / Zapier webhooks, SSRF-guarded at connect time | `e6ae1e0` `2fb7e94` | `webhooks:test` |
+| Owner sign-in | `6d2579a` | `auth:test` |
+| Settings page | `87fc3a3` | `settings:test` + browser |
+| Email as a channel (no AI ↔ out-of-office loops) | `daa0ae5` | `email:test` (real SMTP) |
+| Erasure on request + hashed suppression list | `40b3cc5` | `erasure:test` |
+| Reactivation campaigns, each an experiment with a holdout | `fac8a16` | `campaigns:test` |
+| Closing jobs (done / no-show) → review requests | `cb6489c` | `outcomes:test` |
+| Recurring jobs + an 8am summary to the team; worker health | `ba89055` `ef38fa1` | `digest:test` |
+| Calendar feed (private iCalendar link of every booking) | `a3200e9` | `calendar:test` |
+| Cost per booked job by lead source; missed calls count as leads | `e029cbe` `9c6c4cd` | `settings:test`, `intake:test` |
+| Won / Lost on leads (the labels the models learn from) | `88f7e62` | `outcomes:test` |
+| Settings page; `npm run doctor`; `npm run demo:seed`; `npm test` | `87fc3a3` `a8bb76b` `94c1c30` `9b442fc` | — |
+
+## Found and fixed
+
+| What was wrong | Effect | Commit |
+|---|---|---|
+| No STOP handling | "STOP" got an AI reply; nobody was ever marked do-not-contact | `63d36f3` `b57bace` |
+| Consent gate never ran | `deliver()` never flagged a send as business-initiated, so the SMS adapter's TCPA check was dead code | `63d36f3` |
+| Gate 1 matched substrings | `sue` fired on every `issue`; `manager` on "property manager"; bare `emergency` handed off "do you do emergency repairs?" | `42727e1` |
+| A Gate 1 handover replied with nothing | The customer got silence while the AI paused itself | `42727e1` |
+| Gas smell → "someone will call you back" | Now: leave the house, don't touch switches, call 911 or the gas company from outside | `42727e1` |
+| Escalations told nobody | The customer was promised a person; no person heard | `f7e472d` |
+| No authentication | Anyone with the URL could read every lead and text customers as the business | `6d2579a` |
+| Double-booking | A cancelled booking could hide a confirmed one in the same slot | `1cf3078` |
+| Jobs never marked done | Review requests never went out; no-shows always 0 | `cb6489c` |
+| Recurring jobs never scheduled | The nightly retrain and digest never ran | `ba89055` |
+| SLA counted held drafts; hours in UTC | Faster than reality; "after hours" was 4am–2pm in Boston | `990858b` |
+| Follow-up "once only" guard | Checked a flag nothing set | `f508c37` |
+| Prompt said "heating and cooling" to every tenant | Would have "corrected" a dentist's callers towards AC parts; was in every salon/dentist training example | `97d214d` |
+| Eval lines in the training set | One verbatim, three paraphrased | `5a13c01` |
+| Mixed clocks | Postgres runs 63 ms ahead of the app; replies and inbound were stamped by different clocks | `b45446c` |
+| Times in the server's zone | A Boston job at 12:07 AM showed as 9:37 AM | `f54bf70` |
+| Smoke test wiped the demo tenant | It deleted every contact first, and could text via live Twilio; now runs on a copy with sending off | `74c38b7` |
+| Missed calls weren't leads | Invisible to lead sources, the CRM and reactivation | `9c6c4cd` |
+| Training taught a held phrase | 44 targets said "definitely", which Gate 2 always holds | `b656fd5` |
+
+My own bugs, caught and fixed: an import cycle from `1cf3078` crashed
+`/api/voice/stream` on every request (the voice session caught it;
+`1643d02`, and `npm run imports:test` now prevents it); the training set
+taught a phrase the guardrail holds (`b656fd5`); a tech replying
+"on it" to an alert was being chatted to by the AI (`d5b3102`); webhook
+delivery re-resolved DNS after the SSRF check (`2fb7e94`); intake could
+report an older reply as this lead's (`fdf34e3`).
+
+## Not done
+
+- No live SMS, email or call was sent: every suite runs with the providers
+  switched off, and no real numbers were added.
+- Per-user accounts across several businesses, calendar sync
+  (ServiceTitan / Jobber / Google), and billing.
+
+## Needs you
+
+1. **Team mobiles** at `/settings` → Team (and tick who is on call). Until
+   then no alert reaches anyone; `npm run doctor` shows this and every other gap.
+2. Before any deployment: `ADMIN_PASSWORD` and `SUPPRESSION_SECRET` (set once,
+   never change) in the environment.
+3. **Rotate the Twilio auth token** that was pasted into chat earlier (the
+   voice session's list), and note `.env` has live Twilio credentials: the dev
+   server can text real numbers.
+4. Optional: `brew trust` the third-party taps if you want `llama-quantize`;
+   exporting no longer needs it.
+5. Decide whether to switch the voice model: on the numbers above, not yet.
+
+---
+
 # Update: hearing in context — 17 October 2026
 
 Three commits (`8ff9a87`, `03caae8`, `955ba52`) fixing what live testing on the voice page
