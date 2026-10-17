@@ -6,6 +6,7 @@ import { evaluateFormConsent, intakeLead } from "@/server/features/lead-intake";
 import { slaReport } from "@/server/features/sla";
 import { ScriptedProvider } from "@/server/agent/providers";
 import { POST as intakeRoute } from "@/app/api/leads/route";
+import { testSlug } from "./test-tenant";
 
 /**
  * Lead intake, consent capture, STOP handling and the SLA fix, end to end
@@ -32,7 +33,7 @@ function check(label: string, ok: boolean, detail = "") {
 }
 
 async function main() {
-  const slug = "intake-test";
+  const slug = await testSlug("intake-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: BUSINESS, slug, country: "US", timezone: "America/New_York",

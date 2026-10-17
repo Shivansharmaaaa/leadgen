@@ -9,6 +9,7 @@ import { intakeLead } from "@/server/features/lead-intake";
 import { sendAppointmentReminder } from "@/server/features/reminders";
 import { ScriptedProvider } from "@/server/agent/providers";
 import { POST as inbound } from "@/app/api/webhooks/email/route";
+import { testSlug } from "./test-tenant";
 
 /**
  * Email as a channel, end to end: parsing, the auto-reply loop guard, the
@@ -104,7 +105,7 @@ async function main() {
   resetEmailTransport();
   process.env.EMAIL_INBOUND_TOKEN = "inbound-secret-123";
 
-  const slug = "email-test";
+  const slug = await testSlug("email-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Email Test HVAC", slug, country: "US", timezone: "America/New_York",

@@ -7,6 +7,7 @@ import { intakeLead } from "@/server/features/lead-intake";
 import {
   assertPublicHttps, deliverWebhook, isPrivateAddress, postJson, publish, sign, verify,
 } from "@/server/features/webhooks";
+import { testSlug } from "./test-tenant";
 
 /**
  * Outbound webhooks: signing, the private-network guard, subscriptions,
@@ -66,7 +67,7 @@ async function main() {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/hook`;
 
-  const slug = "webhooks-test";
+  const slug = await testSlug("webhooks-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Webhook Test HVAC", slug, country: "US", timezone: "America/New_York",

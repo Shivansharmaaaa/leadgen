@@ -5,6 +5,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { db, tenants, locations, staff, contacts, conversations, messages, leads, appointments, events, jobs } from "@/server/db";
 import { buildDigest, sendDigest } from "@/server/features/digest";
 import { ensureRecurringJobs, nextLocal } from "@/server/jobs/schedule";
+import { testSlug } from "./test-tenant";
 
 /**
  * The morning summary and the recurring-job scheduler.
@@ -49,7 +50,7 @@ async function main() {
   check("across the clocks going back (Nov 1), still 8am local", fmt(nextLocal(new Date("2026-10-31T13:00:00Z"), TZ, 8)) === "Sun 08:00" &&
     formatInTimeZone(nextLocal(new Date("2026-10-31T13:00:00Z"), TZ, 8), "UTC", "HH:mm") === "13:00");
 
-  const slug = "digest-test";
+  const slug = await testSlug("digest-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Digest Test HVAC", slug, country: "US", timezone: TZ, vertical: "home_services",

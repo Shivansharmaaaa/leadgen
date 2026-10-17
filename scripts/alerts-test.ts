@@ -6,6 +6,7 @@ import { screenInbound } from "@/server/core/guardrails";
 import { alertStaff, alertText, isOpen, nextOpening, pickRecipients } from "@/server/features/staff-alerts";
 import { executeTool } from "@/server/agent/tools";
 import { ScriptedProvider } from "@/server/agent/providers";
+import { testSlug } from "./test-tenant";
 
 /**
  * Gate 1 matching, escalation replies, and staff alerts end to end against
@@ -60,7 +61,7 @@ async function main() {
     said: "I smell gas", reason: "safety: smell gas", service: null, link: "https://app.example.com/inbox?c=1" });
   check("alert says what, who, how to reach them, and where", txt.startsWith("EMERGENCY") && txt.includes("+16175550142") && txt.includes('"I smell gas"') && txt.includes("/inbox?c=1"), txt.replace(/\n/g, " | "));
 
-  const slug = "alerts-test";
+  const slug = await testSlug("alerts-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Alert Test HVAC", slug, country: "US", timezone: TZ,

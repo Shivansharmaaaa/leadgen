@@ -6,6 +6,7 @@ import { handleInbound } from "@/server/core/ingest";
 import { executeTool } from "@/server/agent/tools";
 import { scheduleAppointmentReminders, sendAppointmentReminder, reminderText } from "@/server/features/reminders";
 import { ScriptedProvider } from "@/server/agent/providers";
+import { testSlug } from "./test-tenant";
 
 /**
  * Appointment reminders end to end against Postgres, with no model and no
@@ -29,7 +30,7 @@ const local = (daysAhead: number, hhmm: string) =>
 const hourOf = (d: Date) => Number(formatInTimeZone(d, TZ, "H"));
 
 async function main() {
-  const slug = "reminders-test";
+  const slug = await testSlug("reminders-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Reminder Test HVAC", slug, country: "US", timezone: TZ,
@@ -160,10 +161,12 @@ async function main() {
     const cancelledThere = await book(slot);
     await db.update(appointments).set({ status: "cancelled" }).where(eq(appointments.id, cancelledThere.id));
     await book(slot); // confirmed, same slot
-    const clash = await executeTool(ctx, "book_appointment", { service: "Tune-up", starts_at: slot.toISOString() });
+    // Times as check_availability hands them out: local, with the offset.
+    const offered = (d: Date) => formatInTimeZone(d, TZ, "yyyy-MM-dd'T'HH:mm:ssXXX");
+    const clash = await executeTool(ctx, "book_appointment", { service: "Tune-up", starts_at: offered(slot) });
     check("a cancelled booking no longer hides a confirmed one", clash.ok === false, String(clash.error ?? "booked!"));
     const backToBack = await executeTool(ctx, "book_appointment", {
-      service: "Tune-up", starts_at: new Date(slot.getTime() + 3600_000).toISOString(),
+      service: "Tune-up", starts_at: offered(new Date(slot.getTime() + 3600_000)),
     });
     check("back-to-back slots are not a clash", backToBack.ok === true, String(backToBack.error ?? ""));
     const tunedJobs = await jobsFor(String(backToBack.appointment_id));

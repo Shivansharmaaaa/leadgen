@@ -4,6 +4,7 @@ import {
   addWebhook, disableIntake, removeStaff, removeWebhook, rotateIntakeKey, setSourceSpend, setWebchatOrigins, updateBusiness, upsertStaff,
 } from "@/server/settings";
 import { POST as intake } from "@/app/api/leads/route";
+import { testSlug } from "./test-tenant";
 
 /**
  * Owner settings: every rule the /settings page relies on.
@@ -22,7 +23,7 @@ function check(label: string, ok: boolean, detail = "") {
 }
 
 async function main() {
-  const slug = "settings-test";
+  const slug = await testSlug("settings-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Settings Test", slug, country: "US", timezone: "America/New_York",

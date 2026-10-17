@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, tenants, contacts, leads, appointments, jobs } from "@/server/db";
 import { jobsToClose, recordAppointmentOutcome } from "@/server/features/appointment-outcomes";
+import { testSlug } from "./test-tenant";
 
 /**
  * Closing a job: done wins the lead and queues the review request; no-shows
@@ -16,7 +17,7 @@ function check(label: string, ok: boolean, detail = "") {
 const H = 3600_000;
 
 async function main() {
-  const slug = "outcomes-test";
+  const slug = await testSlug("outcomes-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   await db.delete(tenants).where(eq(tenants.slug, `${slug}-other`));
   const [tenant] = await db.insert(tenants).values({

@@ -4,6 +4,7 @@ import { deliver } from "@/server/core/ingest";
 import { ScriptedProvider } from "@/server/agent/providers";
 import { resetRateLimits, limits, allowedOrigin } from "@/server/features/webchat";
 import { GET, OPTIONS, POST } from "@/app/api/chat/route";
+import { testSlug } from "./test-tenant";
 
 /**
  * The website chat API end to end against Postgres, with no model.
@@ -21,7 +22,7 @@ const SITE = "https://webchat-test.example";
 const session = () => crypto.randomUUID().replace(/-/g, "");
 
 async function main() {
-  const slug = "webchat-test";
+  const slug = await testSlug("webchat-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Webchat Test", slug, country: "US", timezone: "America/New_York",

@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, tenants, contacts, conversations, messages, agentRuns, events, leads, appointments } from "@/server/db";
 import { coachReport, scoreTranscript, type Transcript, type TranscriptMessage } from "@/server/features/scoring";
+import { testSlug } from "./test-tenant";
 
 /**
  * Conversation scoring: each flag fires on the case it exists for and stays
@@ -77,7 +78,7 @@ check("a high flag costs 25", scoreTranscript(timeAsk).score === 75, String(scor
 
 async function integration() {
   console.log("\nCoach report over real rows");
-  const slug = "scoring-test";
+  const slug = await testSlug("scoring-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({ name: "Scoring Test", slug, country: "US", timezone: "America/New_York" }).returning();
   try {

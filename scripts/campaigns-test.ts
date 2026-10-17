@@ -3,6 +3,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { db, tenants, locations, contacts, leads, jobs, messages, outreachAssignments, conversations } from "@/server/db";
 import { handleInbound } from "@/server/core/ingest";
 import { campaignText, launchReactivation, nextSendTime, sendCampaignMessage } from "@/server/features/campaigns";
+import { testSlug } from "./test-tenant";
 
 /**
  * Reactivation campaigns: who is chosen, the holdout, sending hours, and
@@ -31,7 +32,7 @@ async function main() {
   const text = campaignText("sms", { firstName: "Leah", agent: "Alex", business: "Biz", service: "Furnace tune-up" });
   check("names the business, the service, and how to stop", text.startsWith("Hi Leah, it's Alex at Biz.") && text.includes("furnace tune-up") && text.endsWith("Reply STOP to opt out."), text);
 
-  const slug = "campaigns-test";
+  const slug = await testSlug("campaigns-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Campaign Test HVAC", slug, country: "US", timezone: TZ,

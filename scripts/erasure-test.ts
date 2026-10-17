@@ -6,6 +6,7 @@ import {
 import { handleInbound } from "@/server/core/ingest";
 import { eraseContact } from "@/server/features/erasure";
 import { intakeLead } from "@/server/features/lead-intake";
+import { testSlug } from "./test-tenant";
 
 /**
  * Erasure on request: everything about the person goes, including the
@@ -26,7 +27,7 @@ function check(label: string, ok: boolean, detail = "") {
 }
 
 async function main() {
-  const slug = "erasure-test";
+  const slug = await testSlug("erasure-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({
     name: "Erasure Test", slug, country: "GB", timezone: "Europe/London",

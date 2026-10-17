@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { db, tenants, contacts, appointments } from "@/server/db";
 import { rotateCalendarToken } from "@/server/settings";
 import { GET } from "@/app/api/calendar/[token]/route";
+import { testSlug } from "./test-tenant";
 
 /**
  * The private bookings feed: valid iCalendar, the right jobs, and a URL that
@@ -17,7 +18,7 @@ function check(label: string, ok: boolean, detail = "") {
 const get = (token: string) => GET(new Request(`http://localhost/api/calendar/${token}.ics`), { params: Promise.resolve({ token: `${token}.ics` }) });
 
 async function main() {
-  const slug = "calendar-test";
+  const slug = await testSlug("calendar-test");
   await db.delete(tenants).where(eq(tenants.slug, slug));
   const [tenant] = await db.insert(tenants).values({ name: "Calendar Test", slug, country: "US", timezone: "America/New_York",
     settings: { businessName: "Calendar Test HVAC" } }).returning();
