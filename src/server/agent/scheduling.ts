@@ -16,7 +16,7 @@ type Msg = { direction: string; body: string };
 /** A described fault is the start of a job. */
 export const FAULT = /\b(not (?:working|cooling|heating)|(?:isn't|is not|won't|will not|doesn't|does not|stopped) (?:working|cooling|heating|running|turning on|turn on|start(?:ing)?|blowing)|broken|leak|smell|noise|no heat|blowing warm)\b/i;
 
-const SCHEDULING = /\b(?:book|schedule|appointment|come out|come round|visit|availability|when can|what times?|slots?|today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|asap|as soon as|emergency|urgent)\b/i;
+const SCHEDULING = /\b(?:book|schedule|appointment|consult(?:ation)?s?|sessions?|meeting|come out|come round|visit|availability|when can|what times?|slots?|today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|asap|as soon as|emergency|urgent)\b/i;
 
 /**
  * Asking for work: "I need someone to service my heat pump", then "what have

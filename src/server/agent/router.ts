@@ -46,8 +46,23 @@ const TRANSACTIONAL = [
   FAULT,
 ];
 
-/** Words that only come up when someone is talking about their system. */
-const DOMAIN = /\b(a\/?c|air ?con(?:ditioner|ditioning)?|furnace|boiler|heat ?pump|hvac|thermostat|duct(?:work|s)?|condenser|compressor|vents?|radiator|mini ?split|filter)\b/i;
+/**
+ * The tenant's own vocabulary (settings.domainTerms): "furnace" for an HVAC
+ * firm, "study permit" for an immigration office. It used to be one HVAC
+ * list for everyone, so a dentist's "crowns?" went to the chat tier.
+ */
+const domainCache = new Map<string, RegExp | null>();
+function domainPattern(terms: string[] | undefined): RegExp | null {
+  if (!terms?.length) return null;
+  const key = terms.join("|");
+  if (!domainCache.has(key)) {
+    const alts = terms
+      .map((t) => t.trim().toLowerCase()).filter(Boolean)
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*"));
+    domainCache.set(key, alts.length ? new RegExp(`\\b(?:${alts.join("|")})\\b`, "i") : null);
+  }
+  return domainCache.get(key) ?? null;
+}
 
 /**
  * The agent's last message put a booking question to the caller: "9:00 or
@@ -73,6 +88,8 @@ export async function routeTurn(
   businessName: string,
   /** What the agent said last, if anything: an open booking question changes the tier. */
   lastAgentReply?: string,
+  /** The tenant's own vocabulary; see domainPattern. */
+  domainTerms?: string[],
 ): Promise<Route> {
   const t = text.trim();
 
@@ -99,7 +116,7 @@ export async function routeTurn(
 
   // A short turn that names the equipment is the caller getting to the point,
   // not small talk: "AC." on its own is a service enquiry.
-  if (DOMAIN.test(t)) {
+  if (domainPattern(domainTerms)?.test(t)) {
     return { tier: "transact", reason: "names the equipment", fastPath: fast };
   }
 

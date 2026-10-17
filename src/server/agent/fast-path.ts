@@ -130,6 +130,9 @@ const FAQ_RULES: FaqRule[] = [
 
 type PrefixRule = { intent: string; test: RegExp; openers: string[] };
 
+/** Asking for certainty the business can't give: approval, admission, a result. */
+const GUARANTEE_ASK = /\b(?:guarantee[ds]?|promise|definitely|for sure|100 ?%|certain(?:ly)?)\b/i;
+
 const PREFIX_RULES: PrefixRule[] = [
   {
     intent: "greeting",
@@ -292,12 +295,24 @@ const PREFIX_RULES: PrefixRule[] = [
     ],
   },
   {
+    // A yes/no question may have "no" for an answer, and the opener is spoken
+    // before the model decides: "Of course. We can't guarantee an offer."
+    // So it commits to nothing.
+    intent: "yes_no_question",
+    test: /^(?:can|could|do|does|is|are|would|should|will|have|has)\b/i,
+    openers: [
+      "Good question.",
+      "Let me check.",
+      "Okay, so.",
+    ],
+  },
+  {
     intent: "general_question",
-    test: /^(?:can|could|do|does|is|are|would|should|will|how|what|when|where|why|who)\b/i,
+    test: /^(?:how|what|when|where|why|who|which)\b/i,
     openers: [
       "Sure.",
-      "Of course.",
       "Let me help with that.",
+      "Good question.",
     ],
   },
 ];
@@ -342,6 +357,12 @@ export async function resolveFastPath(
         return { kind: "full", text: rule.say(...values), factKey: keys.join("+") };
       }
     }
+  }
+
+  // "Can you guarantee I'll get PR?" The honest answer is no, so the opener
+  // must not sound like yes, whatever intent the rest of the sentence has.
+  if (GUARANTEE_ASK.test(t)) {
+    return { kind: "prefix", text: "Let me be straight with you.", intent: "guarantee" };
   }
 
   for (const rule of PREFIX_RULES) {

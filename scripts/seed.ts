@@ -1,5 +1,6 @@
 import { db, tenants, locations, staff, knowledgeFacts, knowledgeDocs } from "@/server/db";
 import { eq } from "drizzle-orm";
+import { NORTHSIDE_VOICE } from "./northside-voice";
 
 /** A realistic US home-services tenant — the wedge vertical. */
 async function main() {
@@ -26,6 +27,7 @@ async function main() {
       escalationTriggers: ["insurance claim", "warranty dispute"],
       asrContext: "this is a heating and cooling business: 'an answer' or 'a sea' is almost " +
         "certainly 'an AC', 'furnish' is 'furnace', 'heat bump' is 'heat pump'",
+      ...NORTHSIDE_VOICE,
     },
   }).returning();
 

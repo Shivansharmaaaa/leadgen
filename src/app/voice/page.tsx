@@ -57,6 +57,7 @@ export default function VoicePage() {
 
   const recognitionRef = useRef<any>(null);
   const sessionIdRef = useRef<string>("");
+  const businessRef = useRef("northside-hvac");
   const logRef = useRef<HTMLDivElement>(null);
 
   /** Keeps the mic alive across Chrome's automatic restarts. */
@@ -408,7 +409,7 @@ export default function VoicePage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          sessionId: sessionIdRef.current, text,
+          sessionId: sessionIdRef.current, text, tenant: businessRef.current,
           speculative: opts.speculative,
           alternatives: opts.alternatives?.length ? opts.alternatives : undefined,
           discard,
@@ -904,14 +905,40 @@ export default function VoicePage() {
     setListening(false);
   }, [stopCapture]);
 
+  // Which business you are calling (or being called by). Not only HVAC: the
+  // pipeline is the same, the facts and vocabulary are the tenant's.
+  type Business = { slug: string; name: string; agentName: string; reasons: Record<string, string> };
+  const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [business, setBusiness] = useState("northside-hvac");
+  const current = businesses.find((b) => b.slug === business);
+  useEffect(() => {
+    fetch("/api/voice/businesses").then((r) => r.json())
+      .then((j: { businesses: Business[] }) => setBusinesses(j.businesses)).catch(() => {});
+  }, []);
+
   // The agent calls you: a sales follow-up to a website enquiry.
   const [callName, setCallName] = useState("");
-  const [callInterest, setCallInterest] = useState("ac_replacement");
+  const [callInterest, setCallInterest] = useState("");
+  const reasonKeys = Object.keys(current?.reasons ?? {});
+  const interestKey = reasonKeys.includes(callInterest) ? callInterest : reasonKeys[0] ?? "";
   const startSalesCall = useCallback(() => {
     if (!listening) startListening();
-    note("call", `agent is calling about ${callInterest.replace("_", " ")}`);
-    void send("", { outbound: { name: callName.trim(), interest: callInterest } });
-  }, [listening, startListening, note, send, callName, callInterest]);
+    note("call", `${current?.agentName ?? "the agent"} is calling about ${current?.reasons[interestKey] ?? "your enquiry"}`);
+    void send("", { outbound: { name: callName.trim(), interest: interestKey } });
+  }, [listening, startListening, note, send, callName, interestKey, current]);
+
+  /** A different business is a different call: start clean. */
+  const switchBusiness = useCallback((slug: string) => {
+    stopSpeaking();
+    inflightReal.current?.abort();
+    inflightSpec.current?.abort();
+    sessionIdRef.current = `browser_${Math.random().toString(36).slice(2, 10)}`;
+    businessRef.current = slug;
+    setBusiness(slug);
+    setTurns([]);
+    setCallInterest("");
+    note("business", `now ${slug}`);
+  }, [stopSpeaking, note]);
 
   const toggleMic = useCallback(() => {
     if (listening) stopListening();
@@ -924,8 +951,18 @@ export default function VoicePage() {
     <main style={{ maxWidth: 780, margin: "0 auto", padding: "40px 24px 120px" }}>
       <h1 style={{ fontSize: 24, marginBottom: 4 }}>Talk to the agent</h1>
       <p style={{ color: "var(--muted)", marginTop: 0, fontSize: 14 }}>
-        You are calling <strong>Northside Heating &amp; Air</strong>. Same pipeline a real
-        phone call uses — your browser just replaces the phone line.
+        You are calling{" "}
+        <select
+          value={business}
+          onChange={(e) => switchBusiness(e.target.value)}
+          aria-label="Business"
+          style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 7, padding: "3px 6px", fontWeight: 600 }}
+        >
+          {(businesses.length ? businesses : [{ slug: "northside-hvac", name: "Northside Heating & Air" }]).map((b) => (
+            <option key={b.slug} value={b.slug}>{b.name}</option>
+          ))}
+        </select>
+        . Same pipeline a real phone call uses — your browser just replaces the phone line.
       </p>
 
       {!supported && (
@@ -977,8 +1014,7 @@ export default function VoicePage() {
           <>
             <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
               Press the mic once — it keeps listening, so just talk the way you would on a
-              call. Try: <em>“Hi, my AC is blowing warm air and the house is 84 degrees.
-              Can someone come out tomorrow?”</em>
+              call. Try: <em>“{EXAMPLES[business] ?? "Hi, I'd like to know what you offer and what it costs."}”</em>
             </p>
             <div style={{
               display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
@@ -986,14 +1022,11 @@ export default function VoicePage() {
             }}>
               <span style={{ color: "var(--muted)" }}>Or let the agent call you, as a lead who asked about</span>
               <select
-                value={callInterest}
+                value={interestKey}
                 onChange={(e) => setCallInterest(e.target.value)}
-                style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 7, padding: "5px 8px" }}
+                style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 7, padding: "5px 8px", maxWidth: 320 }}
               >
-                <option value="ac_replacement">replacing their AC</option>
-                <option value="heat_pump">switching to a heat pump</option>
-                <option value="furnace_tuneup">a furnace tune-up</option>
-                <option value="maintenance_plan">a maintenance plan</option>
+                {reasonKeys.map((k) => <option key={k} value={k}>{current?.reasons[k]}</option>)}
               </select>
               <input
                 value={callName}
@@ -1072,6 +1105,13 @@ export default function VoicePage() {
     </main>
   );
 }
+
+/** Something to say first, per business. */
+const EXAMPLES: Record<string, string> = {
+  "northside-hvac": "Hi, my AC is blowing warm air and the house is 84 degrees. Can someone come out tomorrow?",
+  "maple-immigration": "Hi, I'm in Toronto on a study permit and I graduate in May. What are my options for PR?",
+  "brightpath-admissions": "Hi, my daughter wants to study computer science at a UK university. How can you help?",
+};
 
 /**
  * The words of `now` beyond what was already committed as `prior`: "" for a

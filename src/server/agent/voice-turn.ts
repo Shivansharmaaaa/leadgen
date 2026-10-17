@@ -15,6 +15,7 @@ import { qualifyFromTranscript } from "./post-turn";
 import { screenScope, overBudget, MAX_AI_TURNS, readAgreement } from "@/server/core/scope";
 import { resolveFastPath, cleanContinuation } from "./fast-path";
 import { routeTurn } from "./router";
+import { outboundNote, type OutboundCall } from "./outbound";
 import { FAULT, slotOffered, schedulingInPlay as inPlay, openSlotsNote } from "./scheduling";
 
 /**
@@ -273,7 +274,7 @@ export async function* runVoiceTurn(opts: {
   // A call the agent placed (the route's outbound opener): its whole point is
   // a booked visit, so scheduling is always in play.
   const outboundCall = ordered
-    .map((m) => (m.meta as { outboundCall?: { name: string | null; interest: string } } | null)?.outboundCall)
+    .map((m) => (m.meta as { outboundCall?: OutboundCall } | null)?.outboundCall)
     .find(Boolean);
   const schedulingInPlay = inPlay(ordered) || Boolean(outboundCall);
   const latestText = latestInbound?.body ?? "";
@@ -426,6 +427,7 @@ export async function* runVoiceTurn(opts: {
     ? await routeTurn(
         tenant.id, latestInbound.body, businessNameForRoute,
         [...ordered].reverse().find((m) => m.direction === "outbound")?.body,
+        tenant.settings?.domainTerms,
       )
     : null;
 
@@ -514,8 +516,8 @@ export async function* runVoiceTurn(opts: {
       `light of the conversation and ${tenant.settings?.asrContext ? `the fact that ${tenant.settings.asrContext}` : "what this business does"}.`,
       "",
       "If they repeat themselves, do NOT repeat your previous answer. Vary it, or",
-      "ask something that moves things on — \"can you hear me alright?\", \"what's",
-      "going on with the system?\"",
+      "ask something that moves things on — \"can you hear me alright?\", \"what",
+      "can I help you with today?\"",
       spokenPrefix ? `\nYou have just said out loud: "${spokenPrefix}" — continue from there, do not repeat it.` : "",
     ].join("\n");
 
@@ -657,22 +659,7 @@ export async function* runVoiceTurn(opts: {
    * "is someone home with the baby?", never saying it would be prioritised.
    * Recognised by rule, as Gate 1 recognises safety, so the model is told.
    */
-  if (outboundCall) {
-    notes.push(
-      `# You placed this call\nYou called ${outboundCall.name ?? "this person"} because they asked about ` +
-      `${outboundCall.interest} on our website, so they agreed to be contacted. You called them: never ` +
-      "ask what they are calling about or how you can help. Your goal is a booked free in-home visit.\n" +
-      "- If it is a bad time, offer to call back when it suits them, and stop.\n" +
-      "- Ask ONE short question at a time about their situation: how old the system is, what it is " +
-      "doing or not doing, how soon they want it sorted.\n" +
-      "- Tie what they tell you to what we actually offer, using only the facts you have.\n" +
-      "- Answer objections with facts and value. If they hesitate on price, say what the facts say about " +
-      "payment or financing, and that the in-home visit and written quote cost nothing and commit them to " +
-      "nothing. Never pressure, and never invent a discount or a deadline.\n" +
-      "- Once they are interested, offer two specific open times.\n" +
-      "- If they say no, or ask not to be called, thank them and end the call politely.",
-    );
-  }
+  if (outboundCall) notes.push(outboundNote(tenant.settings ?? {}, outboundCall));
 
   const heard = latestInbound?.body ?? "";
   if (URGENT.test(heard) || (FAULT.test(heard) && VULNERABLE.test(heard))) {

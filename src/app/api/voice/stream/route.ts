@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, tenants, messages as messagesTable, conversations, contacts, events } from "@/server/db";
 import { detectConsentKeyword, optOutConfirmation } from "@/server/core/opt-out";
+import { outboundOpener, outboundReason } from "@/server/agent/outbound";
 import { resolveContact } from "@/server/core/identity";
 import { extractIdentifiers, extractName } from "@/server/core/extract";
 import { linkIdentifierToContact } from "@/server/core/identity";
@@ -80,18 +81,14 @@ export async function POST(req: Request) {
    */
   if (body.outbound) {
     const name = String(body.outbound.name ?? "").replace(/[^A-Za-z' -]/g, "").trim().slice(0, 40) || null;
-    const interest = OUTBOUND_INTERESTS[String(body.outbound.interest ?? "")] ?? OUTBOUND_INTERESTS.ac_replacement;
+    const interest = outboundReason(tenant.settings ?? {}, body.outbound.interest);
     // Placing a call means having their number, so the booking tool (which
     // needs a name and a phone) is available from the start.
     await db.update(contacts).set({
       ...(name && !contact.displayName ? { displayName: name } : {}),
       ...(!contact.primaryPhone ? { primaryPhone: callerId } : {}),
     }).where(eq(contacts.id, contact.id));
-    const businessName = tenant.settings?.businessName ?? tenant.name;
-    const agentName = tenant.settings?.agentName ?? "Alex";
-    const opener =
-      `Hi${name ? ` ${name}` : ""}, this is ${agentName}, an AI assistant calling from ${businessName}. ` +
-      `You asked us about ${interest} on our website, so I'm following up. Is now a good time for a quick chat?`;
+    const opener = outboundOpener(tenant.settings ?? {}, tenant.name, { name, interest });
     await db.insert(messagesTable).values({
       tenantId: tenant.id, conversationId: conversation.id,
       direction: "outbound", channel: "voice", authorType: "ai", body: opener, status: "sent",
@@ -211,14 +208,6 @@ export async function POST(req: Request) {
 
   return new Response(stream, { headers: SSE_HEADERS });
 }
-
-/** What the lead asked about on the website: the reason for the call. */
-const OUTBOUND_INTERESTS: Record<string, string> = {
-  ac_replacement: "a quote for replacing your air conditioning",
-  heat_pump: "switching to a heat pump",
-  furnace_tuneup: "a furnace tune-up before winter",
-  maintenance_plan: "our maintenance plan",
-};
 
 const SSE_HEADERS = {
   "content-type": "text/event-stream; charset=utf-8",

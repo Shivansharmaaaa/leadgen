@@ -78,6 +78,22 @@ export type TenantSettings = {
   sourceSpend?: Record<string, number>;
   /** Secret in the private bookings calendar feed URL; rotating it cuts off old subscriptions. */
   calendarToken?: string;
+  /**
+   * What a booking is called here, as the agent says it: "free in-home visit",
+   * "consultation with a licensed consultant", "free counselling session".
+   */
+  bookingNoun?: string;
+  /**
+   * Why the agent might call someone who enquired, keyed for the picker on
+   * /voice: the phrase after "You asked us about …".
+   */
+  outboundReasons?: Record<string, string>;
+  /**
+   * Words that only come up when someone talks about this business's work
+   * ("furnace", "study permit"): a short turn naming one is an enquiry, not
+   * small talk, and gets the full pipeline.
+   */
+  domainTerms?: string[];
 };
 
 export const locations = pgTable("locations", {

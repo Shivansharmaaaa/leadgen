@@ -90,6 +90,8 @@ WARM_PHRASES = [
     "Sorry, could you say that again?",
     "Let me get a colleague to call you back about that — someone will be in touch shortly.",
     "Great — I'll have a colleague call you back shortly.",
+    "Okay, so.",
+    "Let me be straight with you.",
 ]
 
 CACHE: dict[tuple[str, str, float], bytes] = {}
