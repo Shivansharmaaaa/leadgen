@@ -106,6 +106,33 @@ export function buildSystemPrompt(args: {
   if (contact.primaryPhone) known.push(`phone: ${contact.primaryPhone}`);
   if (contact.primaryEmail) known.push(`email: ${contact.primaryEmail}`);
 
+  /**
+   * A call has three tools: check_availability, book_appointment and
+   * offer_callback. Qualifying and saving details happen after the turn, and
+   * the caller's number is already on file. Telling a 3B model to call tools
+   * it doesn't have is wasted prefill and invites made-up tool calls. Every
+   * other channel's prompt is unchanged.
+   */
+  const voice = channel === "voice";
+  const steps = voice
+    ? `1. Understand what the person actually needs.
+2. Get them booked. Offer real times from check_availability and book one.
+3. If you cannot help, hand over cleanly rather than guessing.`
+    : `1. Understand what the person actually needs.
+2. Record it — call qualify_lead as soon as you know the service and urgency.
+3. Get them booked. Offer real times from check_availability and book one.
+4. If you cannot help, hand over cleanly rather than guessing.`;
+  const escalation = voice
+    ? `- If the conversation turns legal, medical, safety-related, or to a refund
+  demand — or they ask for a person — say you'll have someone call them back,
+  use offer_callback, and stop.`
+    : `- If the conversation turns legal, medical, safety-related, or to a refund
+  demand — or they ask for a human — call escalate_to_human immediately and stop.`;
+  const details = voice
+    ? "Get their name before booking; their number is already on file."
+    : `Collect a name and a phone number before booking. Call save_contact_detail the
+moment you learn either one.`;
+
   const system = `You are ${agentName}, answering on behalf of ${businessName}.
 You are not a general assistant. You exist to help this business's customers and
 to capture work for ${businessName}.
@@ -115,10 +142,7 @@ Channel: ${channel}
 ${CHANNEL_STYLE[channel]}${channel === "voice" ? `\n${mishearingLine(s.asrContext)}` : ""}
 
 # What you are trying to do, in order
-1. Understand what the person actually needs.
-2. Record it — call qualify_lead as soon as you know the service and urgency.
-3. Get them booked. Offer real times from check_availability and book one.
-4. If you cannot help, hand over cleanly rather than guessing.
+${steps}
 
 ${LEAN_PROMPT ? LEAN_PLAYBOOK : CONVERSION_PLAYBOOK}
 
@@ -133,8 +157,7 @@ ${LEAN_PROMPT ? LEAN_PLAYBOOK : CONVERSION_PLAYBOOK}
 - NEVER promise a result, a timeline, or a discount.
 - If asked whether you are a human or an AI, say plainly that you are an AI
   assistant for ${businessName}. Never claim to be a person.
-- If the conversation turns legal, medical, safety-related, or to a refund
-  demand — or they ask for a human — call escalate_to_human immediately and stop.
+${escalation}
 - Ask ONE question at a time. Never interrogate.
 - Never invent a colleague's name, a technician's name, or anyone else's. Say
   "a colleague" or "someone from the team".
@@ -146,17 +169,16 @@ ${LEAN_PROMPT ? LEAN_PLAYBOOK : CONVERSION_PLAYBOOK}
 ${knowledge.factsBlock || "(none configured)"}
 
 ${knowledge.proseBlock ? `# Business background\n${knowledge.proseBlock}` : ""}
-${knowledge.truncated ? "\n(Some documents were omitted — use search_knowledge to look things up.)" : ""}
+${knowledge.truncated && !voice ? "\n(Some documents were omitted — use search_knowledge to look things up.)" : ""}
 
-Collect a name and a phone number before booking. Call save_contact_detail the
-moment you learn either one.`.trim();
+${details}`.trim();
 
   const context = `# Right now
 Current time: ${now} (${tz})
 
 # Who you are talking to
 ${known.length ? known.join("\n") : "Unknown — you have no details on this person yet."}
-${memoryBlock ? `\n# What you already know about them\n${memoryBlock}\n\nUse this naturally — do not recite it back at them. If something here is marked\nunconfirmed, check it rather than stating it as fact. If they contradict\nsomething here, call remember with the corrected value.` : ""}
+${memoryBlock ? `\n# What you already know about them\n${memoryBlock}\n\nUse this naturally — do not recite it back at them. If something here is marked\nunconfirmed, check it rather than stating it as fact. If they contradict\nsomething here, ${voice ? "go with what they say now" : "call remember with the corrected value"}.` : ""}
 ${contact.doNotContact ? "\n⚠ This contact is on the do-not-contact list. Do not solicit." : ""}`.trim();
 
   return { system, context };
