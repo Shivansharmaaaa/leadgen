@@ -147,6 +147,50 @@ report an older reply as this lead's (`fdf34e3`).
 
 ---
 
+# Update: voice overnight — booking that books, emergencies, opt-out — 17 October 2026
+
+The voice session's work after the GPU came back, all on `llama3.2:3b`, all
+found by replaying calls against the live `/api/voice/stream` route.
+
+## At a glance
+
+- **A booking on a call now actually happens, at the time that was said.**
+  Before: a replayed call ended "I've got you booked for Saturday at 9:00 AM"
+  with no appointment, and the next one booked **5:00 AM**. After: real slots
+  offered, the caller picks one and gives a name and number, and the
+  appointment row matches what was said (Sat 9:00 AM, Sat 10:00 AM).
+- **Emergencies are treated as urgent:** `emergency_urgency` went from 2/6 to **5/5**.
+- **Offering concrete times on a call:** `two_specific_times` went from 0/3 to **3/3**.
+- **The product facts don't hurt:** A/B, 3 runs each on 60 checks: facts ON 58.0 average, OFF 56.3.
+
+## What was wrong, and what changed
+
+| Seen on a replayed call | Cause | Fix |
+|---|---|---|
+| "9:30 please" after the agent offered times got no booking | Starts with "yes" or is ≤5 words, so it went to the chat tier, which has **no tools** | A reply to a booking question goes to the full pipeline (8/8 routing cases) |
+| "I need someone to service my heat pump" could not get times | Not a scheduling word or a fault, so `check_availability` was withheld | Asking for work opens scheduling; product questions still don't (12/12) |
+| Times made up ("2:30 to 4:00 PM"), then held by Gate 2 | The 3B model skips the tool even when it is offered | The calendar is read **before** the model runs, and the real slots go into the per-turn context |
+| "I've got you booked", nothing booked | `book_appointment` needs a name on file, and voice saved it only *after* the turn | A stated name is saved before the turn (12/12, incl. "I'm calling about my AC" → no name) |
+| An appointment at 5:00 AM | The model wrote `09:00Z` meaning 9 AM local; `book_appointment` accepted any future time | Only times `check_availability` would offer can be booked, and slots are given in local time with an offset; a UTC time counts as local only if the agent said that time (9/9 + 8/8, reminders suite passes) |
+| "We can definitely…" held by Gate 2; "with Technician [Name]" | Gate 2 runs after the words are spoken | Each sentence is screened **before** it's spoken: a false booking claim is dropped, "definitely" removed, placeholders cut (11/11) |
+| "No heat and a baby": sympathy, no urgency (4/6) | The model wasn't told | Urgency is recognised by rule, as Gate 1 recognises safety, and the model is told (5/5) |
+| "Don't call me again" got a sales reply on the browser voice route | That route skipped `handleInbound`, where opt-out runs | Same rule and confirmation; never from a guessed half-sentence |
+| "I can smell gas" got **silence** | The streaming Gate 1 branch escalated with an empty reply | "Leave the house now… call 911 or your gas company" in 3 ms, *then* staff are alerted |
+
+Commits: `b9341e9` opt-out · `52659ec` gas/handoff · `3222aec` + `d913e00`
+booking · `b0d9595` urgency.
+
+## Still heard on replays
+
+These are wording problems from the 3B model, not wrong bookings:
+- "My name is Alex, and I'll be the one servicing your heat pump."
+- "Saturday of next week" said for tomorrow.
+
+The webchat pipeline still lets the model make up times
+(`contact_capture` 4/6, `objection_other_quotes` 4/6). That's the same
+cause the voice fix addressed, and porting it is waiting on the training
+session, since `runtime.ts` is shared.
+
 # Update: hearing in context — 17 October 2026
 
 Three commits (`8ff9a87`, `03caae8`, `955ba52`) fixing what live testing on the voice page
