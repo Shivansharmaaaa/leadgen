@@ -18,13 +18,16 @@ import torch
 from kokoro import KPipeline
 
 PORT = int(os.environ.get("TTS_PORT", "8787"))
+# A woman's voice for every business: the user picked it on 17 Oct from the
+# delivery demo, where it spoke for "Maya" (the immigration office).
 DEFAULT_VOICE = os.environ.get("TTS_VOICE", "af_heart")
 SAMPLE_RATE = 24000
 
-# Kokoro's default lands above a conversational pace. Natural conversational
-# English runs 130-150 words per minute; this brings it into that band without
-# sounding laboured.
-DEFAULT_SPEED = float(os.environ.get("TTS_SPEED", "0.85"))
+# The user asked for "a bit" faster on 17 Oct. Measured with af_heart over
+# typical agent lines, counting every word: 0.85 → 177 wpm, 0.92 → 190 wpm
+# (+7%), 1.0 → 199 wpm. The delivery planner still slows times, prices and
+# safety instructions relative to this.
+DEFAULT_SPEED = float(os.environ.get("TTS_SPEED", "0.92"))
 
 # Openers the agent says constantly. Synthesised once at startup so the first
 # thing a caller hears costs a dictionary lookup rather than ~800ms of GPU.
