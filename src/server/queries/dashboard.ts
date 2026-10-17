@@ -161,15 +161,22 @@ export async function getDashboard(tenantSlug: string, days = 30) {
   };
 }
 
-export async function getInbox(tenantSlug: string, focus?: string) {
+export async function getInbox(tenantSlug: string, focus?: string, view: "all" | "attention" = "all") {
   const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, tenantSlug) });
   if (!tenant) return null;
 
-  const latest = await db.query.conversations.findMany({
-    where: eq(conversations.tenantId, tenant.id),
-    orderBy: desc(conversations.lastMessageAt),
-    limit: 40,
-  });
+  // "Needs attention": the threads the scorer says a lead may have slipped
+  // in, worst first, each with what was missed.
+  const coach = await coachReport(tenant.id, 30);
+  const missed = new Map(coach.needsAttention.map((n) => [n.conversationId, n.flags.filter((f) => f.severity === "high").map((f) => f.detail)]));
+  const latest = view === "attention"
+    ? (await Promise.all(coach.needsAttention.map((n) => db.query.conversations.findFirst({ where: eq(conversations.id, n.conversationId) }))))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c))
+    : await db.query.conversations.findMany({
+        where: eq(conversations.tenantId, tenant.id),
+        orderBy: desc(conversations.lastMessageAt),
+        limit: 40,
+      });
   // A thread linked from a staff alert or the dashboard goes first, even if
   // it has dropped out of the latest 40.
   const focused = focus && /^[0-9a-f-]{36}$/i.test(focus)
@@ -189,11 +196,11 @@ export async function getInbox(tenantSlug: string, focus?: string) {
           limit: 50,
         }),
       ]);
-      return { conversation: c, contact, messages: msgs.reverse() };
+      return { conversation: c, contact, messages: msgs.reverse(), missed: missed.get(c.id) ?? [] };
     }),
   );
 
-  return { tenant, threads, focus: focused?.id ?? null };
+  return { tenant, threads, focus: focused?.id ?? null, attentionCount: coach.needsAttention.length, view };
 }
 
 /** Every channel one person is reachable on — the cross-channel timeline. */

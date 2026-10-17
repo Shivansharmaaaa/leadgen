@@ -9,9 +9,9 @@ const CHANNEL_ICON: Record<string, string> = {
   instagram: "📷", messenger: "💬", whatsapp: "🟢", gbp_review: "⭐",
 };
 
-export default async function InboxPage({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
-  const { c } = await searchParams;
-  const data = await getInbox("northside-hvac", c);
+export default async function InboxPage({ searchParams }: { searchParams: Promise<{ c?: string; view?: string }> }) {
+  const { c, view } = await searchParams;
+  const data = await getInbox("northside-hvac", c, view === "attention" ? "attention" : "all");
   if (!data) {
     return (
       <main style={{ maxWidth: 600, margin: "0 auto", padding: 64 }}>
@@ -28,6 +28,12 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       <p style={{ color: "var(--muted)", marginTop: 0, fontSize: 14 }}>
         Every channel, one thread per person. {data.threads.length} conversations.
       </p>
+      <nav style={{ display: "flex", gap: 14, fontSize: 13, marginTop: 10 }}>
+        <Link href="/inbox" style={{ color: data.view === "all" ? "var(--text)" : "var(--accent)", fontWeight: data.view === "all" ? 600 : 400 }}>All</Link>
+        <Link href="/inbox?view=attention" style={{ color: data.view === "attention" ? "var(--text)" : "var(--accent)", fontWeight: data.view === "attention" ? 600 : 400 }}>
+          Needs attention ({data.attentionCount})
+        </Link>
+      </nav>
 
       {data.threads.length === 0 && (
         <p style={{ color: "var(--muted)", marginTop: 40 }}>
@@ -36,7 +42,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 28 }}>
-        {data.threads.map(({ conversation, contact, messages }) => (
+        {data.threads.map(({ conversation, contact, messages, missed }) => (
           <article key={conversation.id} id={conversation.id} style={{
             border: `1px solid ${conversation.id === data.focus ? "var(--accent)" : "var(--border)"}`,
             borderRadius: "var(--radius)",
@@ -70,6 +76,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               </span>
             </header>
 
+            {missed.length > 0 && (
+              <div style={{ padding: "8px 16px", fontSize: 13, color: "var(--danger)", borderBottom: "1px solid var(--border)" }}>
+                Missed: {missed.join(" ")}
+              </div>
+            )}
             <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
               {messages.slice(-8).map((m) => {
                 const outbound = m.direction === "outbound";
