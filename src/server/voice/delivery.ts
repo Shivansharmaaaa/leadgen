@@ -93,6 +93,10 @@ export function personaFor(settings: TenantSettings | null | undefined, country 
 // ─── Reading the call ───────────────────────────────────────────────────────
 
 /**
+ * Also gates booking (SPOKEN_TIME below, used by agent/scheduling.ts and
+ * voice-turn.ts): a change here needs routing:test and the booking eval, not
+ * only delivery:test.
+ *
  * A time, in digits or spelled out the way the 3B model often writes it:
  * "Tuesday at 10 AM", "11:30", "eleven o'clock in the morning", "half past
  * two", "nine thirty", "two thirty in the afternoon". Never "ten minutes" or
