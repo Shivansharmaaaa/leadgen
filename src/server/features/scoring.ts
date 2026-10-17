@@ -163,7 +163,8 @@ export async function scoreConversation(conversationId: string) {
   return {
     conversationId: convo.id,
     channel: convo.channel,
-    contactName: contact?.displayName ?? null,
+    // Someone who never gave a name is still someone: show how to reach them.
+    contactName: contact?.displayName ?? contact?.primaryPhone ?? contact?.primaryEmail ?? null,
     lastMessageAt: convo.lastMessageAt,
     ...scoreTranscript({
       channel: convo.channel,
