@@ -13,9 +13,12 @@ export const dynamic = "force-dynamic";
 const TTS_URL = process.env.TTS_URL ?? "http://127.0.0.1:8787";
 
 export async function POST(req: Request) {
-  const { text, voice, speed } = (await req.json().catch(() => ({}))) as {
-    text?: string; voice?: string; speed?: number;
+  const { text, voice, speed, exaggeration } = (await req.json().catch(() => ({}))) as {
+    text?: string; voice?: string; speed?: number; exaggeration?: number;
   };
+  // Chatterbox's emotion dial, from the plan. Kokoro ignores it.
+  const feeling = typeof exaggeration === "number" && Number.isFinite(exaggeration)
+    ? Math.min(2, Math.max(0.25, exaggeration)) : undefined;
   // From the delivery plan: slower on times and prices, quicker on fillers.
   // Clamped, and omitted when absent so Kokoro uses its default (and the
   // pre-rendered openers stay cache hits).
@@ -26,7 +29,10 @@ export async function POST(req: Request) {
     const res = await fetch(`${TTS_URL}/speak`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, voice: voice ?? process.env.TTS_VOICE, ...(pace ? { speed: pace } : {}) }),
+      body: JSON.stringify({
+        text, voice: voice ?? process.env.TTS_VOICE,
+        ...(pace ? { speed: pace } : {}), ...(feeling ? { exaggeration: feeling } : {}),
+      }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) return new Response("tts failed", { status: 502 });

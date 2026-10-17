@@ -264,12 +264,12 @@ export default function VoicePage() {
     return audioCtx.current;
   }, []);
 
-  const fetchSpeech = useCallback(async (text: string, speed?: number): Promise<ArrayBuffer | null> => {
+  const fetchSpeech = useCallback(async (text: string, speed?: number, exaggeration?: number): Promise<ArrayBuffer | null> => {
     try {
       const res = await fetch("/api/voice/tts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, ...(speed ? { speed } : {}) }),
+        body: JSON.stringify({ text, ...(speed ? { speed } : {}), ...(exaggeration ? { exaggeration } : {}) }),
       });
       if (!res.ok) return null;
       return await res.arrayBuffer();
@@ -304,7 +304,7 @@ export default function VoicePage() {
     // plan, a safety warning first of all. A rate within 3% isn't worth a miss.
     const speed = plan && !opener && Math.abs(plan.rate - 1) >= 0.03
       ? Math.round(engineSpeed.current * plan.rate * 100) / 100 : undefined;
-    const pending = fetchSpeech(text, speed);
+    const pending = fetchSpeech(text, speed, plan?.exaggeration);
     let synthMs = 0;
     void pending.then(() => { synthMs = Math.round(performance.now() - queuedAt); });
     chain.current = chain.current.then(async () => {
@@ -1120,7 +1120,7 @@ export default function VoicePage() {
 }
 
 /** The part of a sentence's delivery plan (voice/delivery.ts) Kokoro can carry. */
-type SpeechPlan = { rate: number; pauseBeforeMs: number; pauseAfterMs: number; style: string };
+type SpeechPlan = { rate: number; pauseBeforeMs: number; pauseAfterMs: number; style: string; exaggeration?: number };
 
 /** Something to say first, per business. */
 const EXAMPLES: Record<string, string> = {

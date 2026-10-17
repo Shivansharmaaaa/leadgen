@@ -2,7 +2,13 @@ import { eq } from "drizzle-orm";
 import { db, tenants, messages as messagesTable, conversations, contacts, events } from "@/server/db";
 import { detectConsentKeyword, optOutConfirmation } from "@/server/core/opt-out";
 import { outboundOpener, outboundReason } from "@/server/agent/outbound";
-import { personaFor, planDelivery } from "@/server/voice/delivery";
+import { personaFor, planDelivery, toChatterbox, type Delivery } from "@/server/voice/delivery";
+
+/**
+ * The plan plus Chatterbox's emotion dial (the voice the user picked, for a
+ * GPU host). Kokoro ignores it; set TTS_URL to a Chatterbox server and it applies.
+ */
+const withEmotion = (d: Delivery) => ({ ...d, exaggeration: toChatterbox(d).exaggeration });
 import { screenInbound } from "@/server/core/guardrails";
 import { resolveContact } from "@/server/core/identity";
 import { extractIdentifiers, extractName } from "@/server/core/extract";
@@ -47,7 +53,7 @@ export async function POST(req: Request) {
   const planned = (reply: string, heard: string) =>
     reply.split(/(?<=[.!?])\s+/).map((sentence, i) => ({
       type: "sentence", text: sentence, msSinceStart: 0,
-      delivery: planDelivery(sentence, { heard, index: i }, persona),
+      delivery: withEmotion(planDelivery(sentence, { heard, index: i }, persona)),
     }));
 
   const sessionId = body.sessionId ?? `browser_${Date.now()}`;
@@ -203,7 +209,7 @@ export async function POST(req: Request) {
         })) {
           if (ev.type === "tool" && ev.name === "book_appointment" && ev.ok) booked = true;
           if (ev.type === "sentence") {
-            send({ ...ev, delivery: planDelivery(ev.text, { heard: text, index: index++, safety, booked, urgent }, persona) });
+            send({ ...ev, delivery: withEmotion(planDelivery(ev.text, { heard: text, index: index++, safety, booked, urgent }, persona)) });
             continue;
           }
           send(ev);
