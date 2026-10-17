@@ -31,7 +31,10 @@ fi
 
 for m in "${models[@]}"; do
   echo "== next action: $m"
-  $PY finetune/eval_actions.py --model "$m" --per-kind "$PER_KIND" --tag "$RUN" | tail -32
+  # Every decision to a log; the per-kind table to the screen.
+  log="data/finetune/runs/$RUN/actions_${m//[:\/]/_}.log"
+  $PY finetune/eval_actions.py --model "$m" --per-kind "$PER_KIND" --tag "$RUN" > "$log" 2>&1
+  sed -n '/^kind /,$p' "$log"
   ollama stop "$m" >/dev/null 2>&1 || true   # free the GPU for the next one
 done
 echo "== done; results in data/eval/actions_chat_*_${RUN}.json"

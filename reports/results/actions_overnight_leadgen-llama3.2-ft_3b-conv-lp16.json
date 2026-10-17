@@ -1,0 +1,149 @@
+{
+  "model": "leadgen-llama3.2-ft:3b-conv-lp16",
+  "mode": "chat",
+  "tag": "3b-conv-lp16",
+  "per_kind": 3,
+  "stats": {
+    "hvac:offer_two_times": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "conversion:objection_trust": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "conversion:confirm_after_objection": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "hvac:book_after_choice": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "hvac:qualify_first": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "hvac:save_details_not_book": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "conversion:objection_price": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "hvac:ai_disclosure": {
+      "n": 2,
+      "action": 2,
+      "args": 2
+    },
+    "conversion:objection_browsing": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "hvac:acknowledge_own_details": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "hvac:confirm_booked": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "conversion:book_after_objection": {
+      "n": 3,
+      "action": 3,
+      "args": 2
+    },
+    "hvac:check_before_offer": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "hvac:unknown_price": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "conversion:objection_competition": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "conversion:accept_no_gracefully": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "conversion:objection_delay": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "hvac:ask_which_time": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    },
+    "hvac:escalate": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "sgd:after_booking": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "sgd:book_after_yes": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "sgd:reply": {
+      "n": 3,
+      "action": 1,
+      "args": 1
+    },
+    "sgd:check_before_readback": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "sgd:booking_failed": {
+      "n": 3,
+      "action": 3,
+      "args": 3
+    },
+    "sgd:readback_no_booking": {
+      "n": 3,
+      "action": 3,
+      "args": 3,
+      "premature": 0
+    }
+  },
+  "total": {
+    "n": 74,
+    "action": 72,
+    "args": 71,
+    "premature": 0
+  }
+}
