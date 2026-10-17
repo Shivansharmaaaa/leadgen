@@ -44,21 +44,40 @@ The 3B adapter trained below is in
 ## Running it on a Mac
 
 Apple Silicon runs this on the GPU through PyTorch's `mps` backend with no
-flags. A full epoch over the packed set is ~3M tokens, most of it the ~2.4k-
-token system prompt each dialogue carries. The CPU box these results came
-from managed ~23 tokens/s, so it only ever trained on a slice. Mac throughput
-was not measured here; the trainer prints tokens/s from the first step, so
-start with a quarter epoch and a time cap and scale from what it reports:
+flags. Measured on an M3 Pro with 18 GB (17 Oct 2026), the 3B trains at
+**~128 tokens/s** with an **11 GB** footprint. The set is 3.33M tokens (most
+of it the ~2.7k-token system prompt each dialogue carries), so an epoch is
+~7 hours; the overnight run below took 0.65 of one.
+
+What it took to get there, all now in `train_lora.py`:
+
+- Weights load straight onto the GPU. Loading to CPU then `.to("mps")` held
+  two copies (~13 GB) and macOS killed the process before step 1.
+- The allocator's cache is handed back after every backward. PyTorch keeps
+  freed GPU blocks for reuse, and with ~1,200 different sequence lengths the
+  cache only grew: 17 GB footprint on an 18 GB machine, swapping, 57 tok/s.
+- The vocabulary projection runs only where there's a label (~3 GB of fp32
+  logits saved at 4k tokens), matching HF's loss to 6e-8.
+- Checkpoints every `--save-every` steps, and `--resume` continues on the same
+  data order; Ctrl-C or `kill` saves first. Leave `--resume` on the command
+  and re-running it is always safe.
+- `best/` keeps the adapter with the lowest held-out loss. The overnight run
+  bottomed out at step 50 and its weights were gone by morning.
+
+Nothing else should hold the GPU while it trains: Ollama with `llama3.1`
+loaded is 11 GB on its own, and that combination was OOM-killed.
 
 ```bash
-.venv/bin/python finetune/train_lora.py --base meta-llama/Llama-3.2-3B-Instruct \
-  --name 3b-full --epochs 0.25 --max-minutes 90 --grad-accum 8 --lr 2e-4 --eval-every 25
-.venv/bin/python finetune/export_ollama.py --run 3b-full --llama-cpp ~/src/llama.cpp
-.venv/bin/python finetune/eval_actions.py --model leadgen-llama3.2-ft:3b-full --per-kind 6
+.venv/bin/python finetune/train_lora.py --base data/finetune/base/llama3.2-3b --name 3b-run \
+  --loraplus 16 --lr 2e-4 --epochs 0.5 --grad-accum 8 --warmup 8 \
+  --eval-every 25 --save-every 5 --max-minutes 345 --resume
+bash finetune/after_training.sh 3b-run best     # export final + best, score against stock
 ```
 
-Then point the voice line at it: `OLLAMA_VOICE_MODEL=leadgen-llama3.2-ft:3b-full`
-in `.env`, and re-run `npm run eval -- --voice` to compare with the stock build.
+Exporting needs no `llama-quantize` on a Mac: when it is missing,
+`export_ollama.py` lets Ollama quantise the f16 GGUF itself, and the result
+is Q4_K_M like stock (verified). Then point the voice line at the winner
+(`OLLAMA_VOICE_MODEL=...` in `.env`) and run `npm run eval -- --voice`.
 
 ## What it learns from
 
