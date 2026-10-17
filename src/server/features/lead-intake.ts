@@ -100,6 +100,17 @@ export function evaluateFormConsent(
   };
 }
 
+/**
+ * Checkbox wording that passes evaluateFormConsent: names the seller, covers
+ * automated texts, says consent is not a condition of purchase, and says how
+ * to stop. Shown on /settings for the client to paste next to their form.
+ */
+export function recommendedConsentWording(businessName: string): string {
+  return `By checking this box, I agree that ${businessName} may contact me by text message, ` +
+    "including automated texts, at the number I provided. Consent is not a condition of purchase. " +
+    "Message and data rates may apply. Reply STOP to opt out.";
+}
+
 /** "Northside Heating & Air" is named by "Northside Heating and Air" or "Northside". */
 function namesSeller(text: string, businessName: string): boolean {
   const norm = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();

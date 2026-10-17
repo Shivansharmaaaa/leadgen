@@ -50,6 +50,8 @@ async function main() {
     const noCondition = evaluateFormConsent({ sms: true, language: GOOD_CONSENT.replace("Consent is not a condition of purchase. ", "") }, BUSINESS);
     check("missing 'not a condition of purchase' is rejected", !noCondition.sms, noCondition.problems[0]);
     check("unticked box is rejected", !evaluateFormConsent({ sms: false, language: GOOD_CONSENT }, BUSINESS).sms);
+    const { recommendedConsentWording } = await import("@/server/features/lead-intake");
+    check("the wording /settings recommends passes its own check", evaluateFormConsent({ sms: true, language: recommendedConsentWording(BUSINESS) }, BUSINESS).sms);
     check("short-name mention counts ('Intake' for the full name)",
       evaluateFormConsent({ sms: true, language: GOOD_CONSENT.replace(BUSINESS, "Intake") }, BUSINESS).sms);
 

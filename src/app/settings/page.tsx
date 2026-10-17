@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db, staff } from "@/server/db";
 import { getTenant } from "@/server/settings";
 import { WEBHOOK_EVENTS } from "@/server/features/webhooks";
+import { recommendedConsentWording } from "@/server/features/lead-intake";
 import { deleteStaff, deleteWebhook } from "./actions";
 import { BusinessForm, IntakePanel, OriginsForm, SpendForm, StaffForm, WebhookForm } from "./forms";
 
@@ -50,6 +51,34 @@ export default async function SettingsPage() {
 
       <Section title="Lead intake" hint="Leads from forms and marketplaces get a reply in seconds. Texting needs the form's consent wording to name your business; the dashboard tells you if it doesn't.">
         <IntakePanel enabled={Boolean(s.intakeKey)} endpoint={`${app}/api/leads?tenant=${tenant.slug}`} />
+        <p style={{ fontSize: 13, color: "var(--muted)", margin: "18px 0 6px" }}>
+          Put this next to an unticked checkbox on your form, so leads can be texted straight away:
+        </p>
+        <code style={{ display: "block", padding: "10px 12px", background: "var(--panel-2)", borderRadius: 6, fontSize: 13, whiteSpace: "pre-wrap", userSelect: "all" }}>
+          {recommendedConsentWording(s.businessName ?? tenant.name)}
+        </code>
+        <details style={{ marginTop: 12, fontSize: 13 }}>
+          <summary style={{ cursor: "pointer", color: "var(--muted)" }}>Example request for your web developer</summary>
+          <code style={{ display: "block", padding: "10px 12px", background: "var(--panel-2)", borderRadius: 6, fontSize: 12, whiteSpace: "pre-wrap", marginTop: 8 }}>
+            {`POST ${app}/api/leads?tenant=${tenant.slug}
+x-intake-key: <your key>
+content-type: application/json
+
+{
+  "source": "website",
+  "externalId": "<your form's submission id>",
+  "name": "Priya Patel",
+  "phone": "(617) 555-0142",
+  "service": "AC repair",
+  "message": "AC is blowing warm air",
+  "consent": {
+    "sms": true,
+    "language": "<the exact wording shown next to the box>",
+    "pageUrl": "https://www.yoursite.com/contact"
+  }
+}`}
+          </code>
+        </details>
       </Section>
 
       <Section title="Website chat" hint="Paste this before </body> on your site.">
