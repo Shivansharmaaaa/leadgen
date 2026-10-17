@@ -320,3 +320,18 @@ export function toReferenceClip(d: Delivery, persona: Persona, recorded: Readonl
   const clip = recorded.has(key(d.style)) ? key(d.style) : recorded.has(key(base)) ? key(base) : null;
   return { text: d.text, clip, speed: d.rate, pauseBeforeMs: d.pauseBeforeMs, pauseAfterMs: d.pauseAfterMs };
 }
+
+/**
+ * Chatterbox (tts/chatterbox/server.py): the one engine here with an emotion
+ * dial. The user chose its own voice at exaggeration 0.7 ("more feeling") on
+ * 18 Oct, so a warm sentence gets exactly that; the rest sit around it, and a
+ * safety instruction is noticeably calmer. Pace goes as `speed`, which the
+ * server turns into cfg_weight, Chatterbox's pacing control.
+ */
+const EXAGGERATION: Record<Style, number> = {
+  calm: 0.4, neutral: 0.5, reassuring: 0.55, empathetic: 0.6, warm: 0.7, bright: 0.75,
+};
+
+export function toChatterbox(d: Delivery) {
+  return { text: d.text, exaggeration: EXAGGERATION[d.style], speed: d.rate, pauseBeforeMs: d.pauseBeforeMs, pauseAfterMs: d.pauseAfterMs };
+}

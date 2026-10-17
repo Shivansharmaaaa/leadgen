@@ -12,6 +12,7 @@ __pycache__/
 
 # TTS venv and generated audio
 tts/.venv/
+tts/chatterbox/.venv/
 tts/*.wav
 models/moshi/
 

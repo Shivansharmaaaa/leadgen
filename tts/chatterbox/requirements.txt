@@ -1,0 +1,4 @@
+# Chatterbox TTS server (tts/chatterbox/server.py). Own venv: tts/chatterbox/.venv
+chatterbox-tts==0.1.7
+# resemble-perth (the AI-audio watermark) imports pkg_resources, gone from setuptools 81+
+setuptools<81

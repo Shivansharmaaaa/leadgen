@@ -1,6 +1,6 @@
 import {
   personaFor, planDelivery, planReply, stripStageDirections, toElevenLabs, toSsml, toInstruction, toSpeedOnly, toReferenceClip,
-  kokoroStress,
+  kokoroStress, toChatterbox,
 } from "@/server/voice/delivery";
 import { safetyReply } from "@/server/core/guardrails";
 
@@ -116,6 +116,11 @@ check("a spoken price stresses the amount, not 'and' or the unit",
   kokoroStress("It's a hundred and fifty dollars.", ["a hundred and fifty dollars"]) === "It's a [hundred](+1) and [fifty](+1) dollars.",
   kokoroStress("It's a hundred and fifty dollars.", ["a hundred and fifty dollars"]));
 check("words outside a stressed span are untouched", kokoroStress("Call us on Tuesday.", []) === "Call us on Tuesday.");
+const plainWarm = plan("Have you had it serviced this year?", "my AC is fine, just a tune-up");
+check("Chatterbox: a warm sentence gets the user's pick, exaggeration 0.7", toChatterbox(plainWarm).exaggeration === 0.7, `${plainWarm.style} ${toChatterbox(plainWarm).exaggeration}`);
+check("… the gas-leak instruction is calmer", toChatterbox(gas[0]).exaggeration < 0.5, String(toChatterbox(gas[0]).exaggeration));
+check("… a booking made is brighter than warm", toChatterbox(booked).exaggeration > 0.7);
+check("… and the planned pace travels as speed", toChatterbox(offer).speed === offer.rate);
 const clips = new Set(["alex-warm", "alex-calm"]);
 check("a cloning engine gets the clip recorded for that style", toReferenceClip(gas[0], alex, clips).clip === "alex-calm");
 check("… and the persona's base clip when that style has none", toReferenceClip(booked, alex, clips).clip === "alex-warm");
