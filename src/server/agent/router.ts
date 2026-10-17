@@ -1,6 +1,7 @@
 import { resolveFastPath, type FastPath } from "./fast-path";
 import { screenScope, type ScopeVerdict } from "@/server/core/scope";
-import { FAULT } from "./scheduling";
+import { FAULT, BOOKING_INTENT } from "./scheduling";
+import { extractName } from "@/server/core/extract";
 
 /**
  * Turn router.
@@ -44,7 +45,11 @@ const TRANSACTIONAL = [
   /\b(warranty|guarantee|policy|insurance|contract)\b/i,
   /\b(my (?:name|number) is|you can reach me|call me on|phone number)\b/i,
   FAULT,
+  BOOKING_INTENT,
 ];
+
+/** The agent asked for a name: "What name should I put it under?", "Can I get your name?" */
+const NAME_QUESTION = /\bname\b[^?]*\?/i;
 
 /**
  * The tenant's own vocabulary (settings.domainTerms): "furnace" for an HVAC
@@ -108,6 +113,13 @@ export async function routeTurn(
   // Tuesday?" needs the booking path, not the chat one.
   if (TRANSACTIONAL.some((re) => re.test(t))) {
     return { tier: "transact", reason: "tool or commitment needed", fastPath: fast };
+  }
+
+  // "This is Grace Fontaine." is five words of small talk by shape, but
+  // booking needs a name and only the full path can book: on the chat tier
+  // the name was saved and the booking never made.
+  if (extractName(t) || (lastAgentReply && NAME_QUESTION.test(lastAgentReply))) {
+    return { tier: "transact", reason: "gives a name", fastPath: fast };
   }
 
   if (lastAgentReply && BOOKING_QUESTION.test(lastAgentReply)) {

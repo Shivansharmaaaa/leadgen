@@ -25,6 +25,25 @@ const SCHEDULING = /\b(?:book|schedule|appointment|consult(?:ation)?s?|sessions?
  */
 const JOB_REQUEST = /\b(?:need|want|get|send|have) (?:someone|somebody|a (?:tech|technician|engineer))\b|\b(?:service|repair|fix|replace|install|check|look at|tune up)\s+(?:my|the|our|a new|a|an)\b|\b(?:tune[- ]?ups?|maintenance|servicing|repairs)\b/i;
 
+/**
+ * Asking for a time in words SCHEDULING misses: "when could you fit me in?",
+ * "what's the earliest you have?", "any openings?". Anchored to times and
+ * slots, so "the earliest model year you service" and "is the next one
+ * cheaper?" stay product questions: slots in context made the 3B model answer
+ * product questions with appointment times.
+ */
+export const BOOKING_INTENT = new RegExp([
+  String.raw`\bwhen could\b`,
+  String.raw`\bfit (?:me|us|him|her|them|it) in\b`,
+  String.raw`\b(?:earliest|soonest)\s+(?:available|opening|appointment|slot|time|visit|you(?:'ve| have| can| could| got)?)\b`,
+  String.raw`\bnext\s+(?:available|opening|appointment|slot)\b`,
+  String.raw`\bany (?:openings|availability|slots|appointments|times)\b`,
+  String.raw`\bbook (?:me|us|him|her|them) in\b`,
+].join("|"), "i");
+
+/** The agent offered to book: "Would you like me to find you a time?" makes "yes please" a request for times. */
+const AGENT_BOOKING_OFFER = /\bset up (?:that|a) visit|\bbook (?:you|a|that)\b|\bfind you a time\b|\bget you (?:booked|in|scheduled)\b/i;
+
 /** Has a time already been put in front of this customer? Only then can they have chosen one. */
 export function slotOffered(ordered: Msg[]): boolean {
   return ordered.some((m) => m.direction === "outbound" && /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i.test(m.body));
@@ -37,9 +56,9 @@ export function schedulingInPlay(ordered: Msg[]): boolean {
     recent.some((m) => SCHEDULING.test(m.body)) ||
     // A described fault is a job: "no heat and a baby in the house" needs a
     // time today, and without the tool the model can only promise vaguely.
-    recent.some((m) => m.direction === "inbound" && (FAULT.test(m.body) || JOB_REQUEST.test(m.body))) ||
-    // The agent itself offered a visit, e.g. the product answer.
-    ordered.slice(-2).some((m) => m.direction === "outbound" && /\bset up (?:that|a) visit|book (?:you|a|that)\b/i.test(m.body))
+    recent.some((m) => m.direction === "inbound" && (FAULT.test(m.body) || JOB_REQUEST.test(m.body) || BOOKING_INTENT.test(m.body))) ||
+    // The agent itself offered a visit or a booking.
+    ordered.slice(-2).some((m) => m.direction === "outbound" && AGENT_BOOKING_OFFER.test(m.body))
   );
 }
 

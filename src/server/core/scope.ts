@@ -112,7 +112,9 @@ export function overBudget(aiTurns: number): boolean {
  * handover that happens on a misread "no" strands the caller, so anything
  * ambiguous is treated as neither and the conversation carries on.
  */
-const AFFIRMATIVE = /^(?:yes|yeah|yep|yup|sure|ok|okay|please|please do|that(?:'?s| is) (?:fine|great|good)|go ahead|sounds good|alright|why not|definitely|absolutely)\b/i;
+/** "That'd be great", "that would help": agreement in full, not a new request. */
+const AGREE_PHRASE = String.raw`that'?d (?:be (?:great|good|lovely|perfect|helpful|brilliant)|help)|that would (?:be (?:great|good|lovely|perfect|helpful|brilliant)|help)`;
+const AFFIRMATIVE = new RegExp(String.raw`^(?:yes|yeah|yep|yup|sure|ok|okay|please|please do|that(?:'?s| is) (?:fine|great|good)|go ahead|sounds good|alright|why not|definitely|absolutely|${AGREE_PHRASE})\b`, "i");
 const NEGATIVE = /^(?:no|nope|nah|not (?:really|now|yet)|that(?:'?s| is) (?:ok|okay|fine)[, ]*(?:i'?m fine|no thanks)?|don'?t|no thanks|i'?m (?:good|fine|okay))\b/i;
 
 export type Agreement = "yes" | "no" | "unclear";
@@ -129,7 +131,7 @@ export function readAgreement(text: string): Agreement {
    */
   const rest = t
     .replace(/^(?:yes|yeah|yep|yup|sure|ok|okay|please|alright|no|nope|nah)\b[\s,.!]*/i, "")
-    .replace(/^(?:please|please do|go ahead|that'?s (?:fine|great|good|ok|okay)|sounds good|thanks?(?: you)?|cheers)\b[\s,.!]*/i, "")
+    .replace(new RegExp(String.raw`^(?:please|please do|go ahead|that'?s (?:fine|great|good|ok|okay)|sounds good|thanks?(?: you)?|cheers|${AGREE_PHRASE})\b[\s,.!]*`, "i"), "")
     .trim();
   const extra = rest.split(/\s+/).filter(Boolean).length;
   if (extra > 2) return "unclear";
