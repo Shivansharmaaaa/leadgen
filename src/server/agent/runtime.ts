@@ -4,7 +4,7 @@ import {
   type ToolCallRecord,
 } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
-import { screenInbound, screenOutbound, disclosureReply, handoffReply, safetyReply } from "@/server/core/guardrails";
+import { screenInbound, screenOutbound, disclosureReply, handoffReply, safetyReply, softenIntensifiers } from "@/server/core/guardrails";
 import type { Channel } from "@/server/core/types";
 import { buildSystemPrompt } from "./prompt";
 import { recall } from "@/server/memory/store";
@@ -250,8 +250,10 @@ export async function runAgentTurn(opts: {
     return outcome;
   }
 
-  // Gate 2: is the draft safe to send?
+  // Gate 2: is the draft safe to send? Filler certainty is dropped first,
+  // so one "definitely" doesn't hold a whole reply (as on voice).
   let holdReason: string | undefined;
+  if (finalText) finalText = softenIntensifiers(finalText);
   if (finalText) {
     const verdict = screenOutbound(finalText, tenant.settings ?? {}, {
       availabilityChecked: await availabilityChecked(conversation.id, toolRecords),

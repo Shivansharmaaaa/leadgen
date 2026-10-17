@@ -457,8 +457,14 @@ async function qualifyLead(ctx: AgentContext, input: Record<string, unknown>): P
     where: eq(conversations.id, ctx.conversationId),
   });
 
+  // One person, one open need: someone who DMs and then calls is one lead,
+  // not one per conversation (which double-counted leads and cost per lead).
   const existing = await db.query.leads.findFirst({
     where: and(eq(leads.tenantId, ctx.tenant.id), eq(leads.conversationId, ctx.conversationId)),
+  }) ?? await db.query.leads.findFirst({
+    where: and(eq(leads.tenantId, ctx.tenant.id), eq(leads.contactId, ctx.contactId),
+      inArray(leads.status, ["new", "qualified"]), gte(leads.createdAt, new Date(Date.now() - 30 * 86400_000))),
+    orderBy: desc(leads.updatedAt),
   });
 
   const values = {

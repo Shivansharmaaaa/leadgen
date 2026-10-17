@@ -188,6 +188,24 @@ export const PROMISE_PATTERNS: RegExp[] = [
   /\b(?:we|someone)\s+(?:can|will)\s+(?:come|be)\s+(?:out\s+)?(?:tomorrow|today|this\s+\w+day)\b/i,
 ];
 
+/**
+ * "Definitely" and "certainly" add certainty, not meaning: "We can
+ * definitely help" says nothing "We can help" doesn't. Gate 2 holds a reply
+ * for them, which on a text kept a new lead waiting on a person over one
+ * word. They are dropped instead (a sentence that opens with one becomes
+ * "Sure."), as the voice path already does before speaking. Real guarantees
+ * ("I guarantee", "no charge", "we'll be out tomorrow") are untouched, and
+ * Gate 2 still holds those.
+ */
+export function softenIntensifiers(text: string): string {
+  return text
+    .replace(/(^|[.!?]\s+)(?:definitely|certainly|absolutely)\b\s*([,!.])?\s*/gi,
+      (_m, lead: string, p: string | undefined) => `${lead}${p === "," ? "Sure, " : "Sure. "}`)
+    .replace(/\s*\b(?:definitely|certainly)\b,?/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 export function screenOutbound(
   body: string,
   settings: TenantSettings,

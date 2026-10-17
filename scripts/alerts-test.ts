@@ -43,6 +43,15 @@ async function main() {
   check("'I smell gas' is a safety escalation", s("I smell gas in the basement").safety === true);
   check("a CO alarm is a safety escalation", s("the CO alarm keeps going off").safety === true);
 
+  console.log("\nFiller certainty is dropped, real guarantees are not");
+  const { softenIntensifiers, screenOutbound } = await import("@/server/core/guardrails");
+  check("'We can definitely help with that.' → 'We can help with that.'", softenIntensifiers("We can definitely help with that.") === "We can help with that.");
+  check("'Definitely! What time suits?' → 'Sure. What time suits?'", softenIntensifiers("Definitely! What time suits?") === "Sure. What time suits?");
+  check("'We certainly can, yes.' → 'We can, yes.'", softenIntensifiers("We certainly can, yes.") === "We can, yes.", softenIntensifiers("We certainly can, yes."));
+  check("softened text passes Gate 2", screenOutbound(softenIntensifiers("We can definitely help with that."), {}).allow);
+  check("'I guarantee it'll be fixed' is still held", !screenOutbound(softenIntensifiers("I guarantee it'll be fixed today."), {}).allow);
+  check("'no charge' is still held", !screenOutbound(softenIntensifiers("The visit is no charge."), {}).allow);
+
   console.log("\nRecipients and hours (pure)");
   const mk = (o: Partial<typeof staff.$inferSelect>) => ({
     id: crypto.randomUUID(), tenantId: "t", email: `${Math.random()}@x`, name: "x", role: "tech",
@@ -87,6 +96,10 @@ async function main() {
     ScriptedProvider.reset();
     const issue = await inbound(1, "I have an issue with my AC, it's blowing warm");
     check("'issue' reaches the agent", issue.outcome?.provider === "scripted" && !issue.outcome.escalated);
+    ScriptedProvider.enqueue("We can definitely help with that. Is it blowing warm air?");
+    const filler = await inbound(9, "my AC stopped working", "+16175550189");
+    check("a reply with 'definitely' goes out softened instead of being held",
+      !filler.outcome?.holdReason && filler.outcome?.reply === "We can help with that. Is it blowing warm air?", filler.outcome?.reply ?? filler.outcome?.holdReason ?? "");
     const refund = await inbound(2, "I want a refund for last week's visit", "+16175550191");
     check("a Gate 1 handover now replies instead of going silent", Boolean(refund.outcome?.reply?.includes("passing this to a member")), refund.outcome?.reply ?? "null");
     const sentRow = await db.query.messages.findFirst({
@@ -136,6 +149,12 @@ async function main() {
     check("…and the AI keeps the conversation (not a handover)", stillAi?.aiPaused === false);
     await executeTool(ctx, "qualify_lead", { service: "Furnace repair", intent: "no heat", urgency: "emergency", score: 96 });
     check("re-qualifying the same emergency doesn't alert again", (await alertsFor(noHeat.conversationId)).length === 1);
+    // The same person on a second channel: still one lead.
+    const [secondChannel] = await db.insert(conversations).values({ tenantId: tenant.id, contactId: noHeat.contactId, channel: "voice" }).returning();
+    await executeTool({ ...ctx, conversationId: secondChannel.id }, "qualify_lead", { service: "Furnace repair", intent: "called about the same no-heat", urgency: "emergency", score: 97 });
+    const { leads } = await import("@/server/db");
+    const theirLeads = await db.query.leads.findMany({ where: eq(leads.contactId, noHeat.contactId) });
+    check("someone who texts and then calls is one lead, not two", theirLeads.length === 1, String(theirLeads.length));
     const routine = await inbound(8, "Can I get a tune-up sometime next month?", "+16175550197");
     await executeTool({ ...ctx, contactId: routine.contactId, conversationId: routine.conversationId }, "qualify_lead",
       { service: "Tune-up", intent: "annual service", urgency: "this_month", score: 40 });
