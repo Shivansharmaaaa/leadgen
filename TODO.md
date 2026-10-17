@@ -124,7 +124,7 @@ Voice commits tonight: `8ff9a87` (hear in context, echo, products), `955ba52` (f
 
 **Needs you to test live** (`localhost:3100/voice`)
 - [ ] **Pick a business at the top of the page.** Try Maple Immigration and BrightPath Admissions, not just HVAC, and the "Agent calls me" sales call for each (`2fba58a`)
-- [ ] **Decide when the next LoRA run happens** (~3.5 h). It needs Kokoro and Parakeet stopped, so no live voice meanwhile: now, after testing, or overnight
+- [~] LoRA run started overnight 18 Oct ~00:05 (you gave the go-ahead to the dataset session). Kokoro and Parakeet are stopped for it, so there's no live voice until it finishes (~3.5 h). Restart them with `npm run tts` and `npm run stt`
 - [ ] A full booking: "I need someone to service my heat pump", pick one of the two times, give your name and number. You should hear the same time back, and an appointment should appear at that time (`3222aec`, `d913e00`)
 - [ ] Say "AC" or "what AC options do you have"; you should get product types and brands, not "bases" or appointment times
 - [ ] "okay can someone come out tomorrow" should get a booking, not a handover to a human
