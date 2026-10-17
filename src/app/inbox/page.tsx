@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getInbox } from "@/server/queries/dashboard";
+import { currentTenantSlug } from "@/server/settings";
 import { TakeoverButton, ReplyBox, HeldDraft, EraseButton } from "./ThreadControls";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,7 @@ const CHANNEL_ICON: Record<string, string> = {
 
 export default async function InboxPage({ searchParams }: { searchParams: Promise<{ c?: string; view?: string }> }) {
   const { c, view } = await searchParams;
-  const data = await getInbox("northside-hvac", c, view === "attention" ? "attention" : "all");
+  const data = await getInbox(currentTenantSlug(), c, view === "attention" ? "attention" : "all");
   if (!data) {
     return (
       <main style={{ maxWidth: 600, margin: "0 auto", padding: 64 }}>

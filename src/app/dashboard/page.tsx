@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { getDashboard } from "@/server/queries/dashboard";
+import { currentTenantSlug } from "@/server/settings";
 import { CampaignButton } from "./CampaignButton";
 import { closeJob } from "./actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const data = await getDashboard("northside-hvac", 30);
+  const data = await getDashboard(currentTenantSlug(), 30);
   if (!data) return <Empty />;
 
   const h = data.headline;
