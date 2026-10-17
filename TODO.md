@@ -102,10 +102,15 @@ Voice commits tonight: `8ff9a87` (hear in context, echo, products), `955ba52` (f
 
 **Still HVAC-only, so these break for other trades** (the same kind of bug section 1 fixed in the prompt):
 - [x] Chat tier, `voice-turn.ts`: hardcoded "heating and cooling line" replaced with `settings.asrContext` (`03caae8`)
-- [ ] `router.ts` `DOMAIN` regex lists HVAC words only, so a dentist's "do you do crowns?" goes to the chat tier, which has no facts. Build the list per tenant from its knowledge facts, or add a `settings.domainTerms`
-- [ ] `fast-path.ts` product FAQ looks up facts under HVAC key names (`products/AC system types` …). Another trade gets no fast answer and falls back to the model, which is safe but slower. Make it read the tenant's whole `products` category
+- [x] Router vocabulary is per tenant (`settings.domainTerms`, `2fba58a`): "study permit?" is an enquiry at the immigration office and small talk at the HVAC firm (11/11)
+- [ ] `fast-path.ts` instant product answers still look up HVAC fact keys (`products/AC system types` …). Other businesses safely fall back to the model, just slower. Make it read the tenant's whole `products` category
 
 **Correctness**
+- [x] Voice lagged its text by 4–6 s a sentence: a second Kokoro/Parakeet loop reloaded onto the GPU every ~90 s for 5 hours. Now 0.37–0.45 s, and run.sh refuses a second copy (`50c0635`)
+- [x] One spoken answer became two turns (Chrome's late final), and a guessed turn answered twice stayed in history: both fixed (`c231386`, `a3c31b4`)
+- [x] Sales call ("Agent calls me"): the agent places a follow-up call to a lead who enquired. It discloses it's an AI and books only on a real pick (`c231386`)
+- [x] Voice prompt named three tools a call doesn't have; now only its own three (`83eae90`, eval 60/60 twice)
+- [~] Training session is fixing five routing gaps it found by replay (name turns, "earliest", "when could you fit me in", agent-offered booking, "that'd be great")
 - [x] Booking on a call actually books (`3222aec`, `d913e00`). Before, a replayed call said "I've got you booked" with nothing booked, and the next one booked 5 AM. Fixed: answers to a booking question get the booking tools, a stated name is saved before the turn, and `book_appointment` only takes offered times. Verified end to end: Sat 9:00 AM and 10:00 AM booked exactly as said
 - [ ] 3B model quirks still heard on replays: "My name is Alex, and I'll be the one servicing your heat pump", "Saturday of next week" for tomorrow. These are wording problems, not wrong bookings, and need a stronger model or the LoRA
 - [x] `/voice` and `/api/voice/*` now require sign-in once `ADMIN_PASSWORD` is set (`484a14e`, training session). APIs get a JSON 401 and pages redirect to `/login`; production with no password fails closed; the Twilio voice webhook stays public, protected by its signature check. Dev without a password is unchanged (checked on :3100)
@@ -118,6 +123,8 @@ Voice commits tonight: `8ff9a87` (hear in context, echo, products), `955ba52` (f
 - [x] The text pipeline (SMS, webchat, email) reads the calendar before the model on every turn (`8137db0`), as voice does. Webchat `contact_capture` and `objection_other_quotes` had failed 4 of 6 runs; full eval now **60/60 twice**. npm test 437/437
 
 **Needs you to test live** (`localhost:3100/voice`)
+- [ ] **Pick a business at the top of the page.** Try Maple Immigration and BrightPath Admissions, not just HVAC, and the "Agent calls me" sales call for each (`2fba58a`)
+- [ ] **Decide when the next LoRA run happens** (~3.5 h). It needs Kokoro and Parakeet stopped, so no live voice meanwhile: now, after testing, or overnight
 - [ ] A full booking: "I need someone to service my heat pump", pick one of the two times, give your name and number. You should hear the same time back, and an appointment should appear at that time (`3222aec`, `d913e00`)
 - [ ] Say "AC" or "what AC options do you have"; you should get product types and brands, not "bases" or appointment times
 - [ ] "okay can someone come out tomorrow" should get a booking, not a handover to a human

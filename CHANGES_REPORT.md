@@ -147,6 +147,42 @@ report an older reply as this lead's (`fdf34e3`).
 
 ---
 
+# Update: any business, a sales call, and the lag — 17 October 2026 (afternoon)
+
+From the user's live tests on /voice: the agent ignored some answers, said
+things twice, its voice ran seconds behind its text, and it only knew HVAC.
+
+- **Voice lag, found and fixed:** 4–6 s per sentence in the session, **0.37–0.45 s** now.
+  A second keep-alive loop per voice service had been reloading Kokoro and
+  Parakeet onto the GPU every ~90 s for five hours, because it could never get
+  its port (220 failed starts). The start scripts now refuse a second copy.
+- **One answer, one turn:** Chrome's late "final" for a sentence already acted on
+  became a second turn and cut off the first reply; a guessed turn that was
+  answered and then abandoned stayed in the history. Both fixed.
+- **Warm before the first word:** idle models were paged out (2.5 s and 7 s on
+  the first turn). The page wakes all three on open and logs what it heard to
+  `data/voice-logs/` for diagnosis.
+- **Any business:** two demo businesses join HVAC, Maple Immigration Services
+  (Toronto) and BrightPath Admissions (London), picked at the top of /voice.
+  What was hardcoded HVAC now comes from each business's own settings: why it
+  calls leads, what a booking is called, its vocabulary.
+- **The agent calls you:** a follow-up to someone who enquired (the lawful shape
+  of an AI sales call). It says it's an AI, explains the offer from its facts,
+  asks one thing at a time, and books only when you pick a time. Simulated:
+  immigration booked Monday 10 AM after declining to promise PR; admissions
+  booked Saturday 11 AM after declining to guarantee an offer.
+- **Honest openers:** "Of course. I can't guarantee…" is gone; yes/no and
+  guarantee questions get neutral openers.
+- **Voice prompt** names only the tools a call has (eval 60/60 twice).
+
+Mistake: one commit (`c231386`) was pushed with a failing test, because piping
+the output through `tail` hid the exit code. It was repaired in `e99f57b`, and
+pushes are now gated on the suite's real exit code.
+
+**Claude instead of Ollama** (prices from October 2026 third-party roundups): per
+10-turn call, Haiku 5.5 ≈ $0.002, Sonnet 5.5 ≈ $0.04, Opus 5.5 ≈ $0.07. The code
+defaults to Opus when `ANTHROPIC_API_KEY` is set, so set `LEADGEN_MODEL`.
+
 # Update: voice overnight — booking that books, emergencies, opt-out — 17 October 2026
 
 The voice session's work after the GPU came back, all on `llama3.2:3b`, all
