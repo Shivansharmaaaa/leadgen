@@ -498,19 +498,22 @@ export const SCENARIOS: Scenario[] = [
     ],
   },
   {
-    id: "brightpath_bare_name_no_pick",
-    name: "Admissions: real caller answers with just their name, no time picked",
+    // A bare name is only captured when the agent asked for one, so this also
+    // grades the model: after the pick it must ask, or the name never lands.
+    id: "brightpath_pick_then_bare_name_books",
+    name: "Admissions: picks a time, is asked for a name, says just the name, and is booked",
     channel: "voice",
     tenant: "brightpath-admissions",
-    stake: "Callers asked for a name usually just say it; if it isn't captured, the session can never be booked.",
+    stake: "Callers asked for a name usually just say it; if it isn't asked for and captured, the session can never be booked.",
     turns: [
       "I'd like to book the free session for my son, he's applying for medicine. When are you free?",
+      "The first one, please.",
       "Grace Adeyemi.",
     ],
     checks: [
       { type: "saves_name", name: "Grace Adeyemi" },
-      { type: "does_not_call_tool", tool: "book_appointment" },
-      { type: "reply_matches", pattern: "\\b(which|what time|works? (best|better|for you)|either|prefer)\\b" },
+      { type: "calls_tool", tool: "book_appointment" },
+      { type: "books_appointment" },
       { type: "not_held" },
     ],
   },
