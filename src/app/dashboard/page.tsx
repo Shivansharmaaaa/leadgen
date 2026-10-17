@@ -51,7 +51,8 @@ export default async function DashboardPage() {
           <Table
             head={["When", "Job", ""]}
             rows={data.jobsToClose.map((a) => [
-              a.startsAt.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+              // The business's clock, not the server's: a 9am job is 9am where the job is.
+              a.startsAt.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: data.tenant.timezone }),
               a.service,
               <form key="f" action={closeJob} style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
                 <input type="hidden" name="appointmentId" value={a.id} />
@@ -232,7 +233,7 @@ export default async function DashboardPage() {
       {data.reactivation.length > 0 && (
         <Section title="Call these back today"
                  hint="Ranked by expected INCREMENTAL value — how much calling changes the outcome, times what the job is worth. Not by who is likeliest to book anyway.">
-          <CampaignButton contactable={data.reactivation.filter((r) => r.contactableVia.some((v) => v === "sms" || v === "email") && r.segment !== "do_not_disturb").length} />
+          <CampaignButton timeZone={data.tenant.timezone} contactable={data.reactivation.filter((r) => r.contactableVia.some((v) => v === "sms" || v === "email") && r.segment !== "do_not_disturb").length} />
           <Table
             head={["Exp. value", "Segment", "Name", "Service", "Dormant", "Reachable on"]}
             rows={data.reactivation.map((r) => [

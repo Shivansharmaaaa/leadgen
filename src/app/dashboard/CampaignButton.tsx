@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { launchCampaign } from "./actions";
 
 /** Starts a reactivation campaign: a random ~15% are held back to prove it works. */
-export function CampaignButton({ contactable }: { contactable: number }) {
+export function CampaignButton({ contactable, timeZone }: { contactable: number; timeZone: string }) {
   const [state, action, pending] = useActionState(launchCampaign, undefined);
   const r = state?.report;
   return (
@@ -22,7 +22,7 @@ export function CampaignButton({ contactable }: { contactable: number }) {
       {state?.error && <span style={{ color: "var(--danger)", fontSize: 13 }}>{state.error}</span>}
       {r && (
         <span role="status" style={{ fontSize: 13, color: "var(--accent)" }}>
-          {r.treatment} will be messaged{r.firstSendAt ? ` from ${new Date(r.firstSendAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit" })}` : ""},
+          {r.treatment} will be messaged{r.firstSendAt ? ` from ${new Date(r.firstSendAt).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone, timeZoneName: "short" })}` : ""},
           {" "}{r.holdout} held back to measure the difference{r.alreadyInCampaign ? `, ${r.alreadyInCampaign} already in today's campaign` : ""}.
           {r.skipped.length ? ` Skipped: ${r.skipped.map((s) => `${s.count} (${s.reason})`).join(", ")}.` : ""}
         </span>

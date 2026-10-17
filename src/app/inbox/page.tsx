@@ -72,6 +72,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
               <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted)" }}>
                 {conversation.lastMessageAt.toLocaleString("en-US", {
+                  timeZone: data.tenant.timezone,
                   month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
                 })}
               </span>
