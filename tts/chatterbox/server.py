@@ -24,7 +24,7 @@ without them gets the chosen voice's settings. `speed` (a pace from the
 planner, 1 = normal) maps to cfg_weight, Chatterbox's pacing control, since it
 has no speed of its own.
 """
-import io, json, os, sys, threading, time, warnings, wave
+import ast, io, json, os, pathlib, sys, threading, time, warnings, wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 warnings.filterwarnings("ignore")
@@ -55,7 +55,8 @@ print(f"[chatterbox] ready in {time.time() - _t:.1f}s on {device}", flush=True)
 # One generation at a time on the GPU (Metal crashes on concurrent command buffers).
 _GPU_LOCK = threading.Lock()
 CACHE: dict[tuple, bytes] = {}
-CACHE_LIMIT = 256
+# Room for the openers (~62) plus a busy day's repeated lines.
+CACHE_LIMIT = 512
 
 
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -88,6 +89,35 @@ def synth(text: str, exaggeration: float, cfg_weight: float) -> bytes:
         CACHE.pop(next(iter(CACHE)))
     CACHE[key] = data
     return data
+
+
+def openers() -> list[str]:
+    """
+    The agent's instant openers, read from the Kokoro server's WARM_PHRASES
+    (the list fast-path.ts keeps in step) without importing it, which would
+    load Kokoro. One list, so the two engines cannot drift apart.
+    """
+    try:
+        src = (pathlib.Path(__file__).resolve().parent.parent / "server.py").read_text()
+        for node in ast.parse(src).body:
+            if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "WARM_PHRASES" for t in node.targets):
+                return [p for p in ast.literal_eval(node.value) if isinstance(p, str)]
+    except Exception as e:  # noqa: BLE001 — openers are an optimisation, never a reason not to start
+        print(f"[chatterbox] could not read openers: {e}", file=sys.stderr, flush=True)
+    return []
+
+
+def prerender() -> None:
+    """
+    Openers are requested at the defaults (the page sends no pace or emotion
+    for them), so rendering them here makes the first words of a reply a
+    cache hit. On by default on CUDA; on a Mac it would take 20+ minutes.
+    """
+    phrases = openers()
+    t0 = time.time()
+    for p in phrases:
+        synth(p, DEFAULT_EXAGGERATION, DEFAULT_CFG)
+    print(f"[chatterbox] pre-rendered {len(phrases)} openers in {time.time() - t0:.1f}s", flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -137,5 +167,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    if os.environ.get("CHATTERBOX_PRERENDER", "1" if device == "cuda" else "0") == "1":
+        prerender()
     print(f"[chatterbox] listening on http://127.0.0.1:{PORT}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
