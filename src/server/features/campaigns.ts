@@ -39,7 +39,9 @@ export type LaunchReport = {
   firstSendAt: string | null;
 };
 
-export async function launchReactivation(tenantId: string, opts: { campaign?: string; limit?: number } = {}): Promise<LaunchReport> {
+export async function launchReactivation(
+  tenantId: string, opts: { campaign?: string; limit?: number; random?: () => number } = {},
+): Promise<LaunchReport> {
   const tenant = await db.query.tenants.findFirst({ where: eq(tenants.id, tenantId) });
   if (!tenant) throw new Error("unknown tenant");
   const tz = await timezoneFor(tenantId);
@@ -63,7 +65,7 @@ export async function launchReactivation(tenantId: string, opts: { campaign?: st
   let at = nextSendTime(new Date(), tz);
   const firstSendAt = chosen.length ? at : null;
   for (const c of chosen) {
-    const cohort = await assignCohort({ tenantId, contactId: c.contactId, leadId: c.leadId, campaign, score: c.score });
+    const cohort = await assignCohort({ tenantId, contactId: c.contactId, leadId: c.leadId, campaign, score: c.score, random: opts.random });
     if (cohort === "already_assigned") { already++; continue; }
     if (cohort === "holdout") { holdout++; continue; }
     treatment++;

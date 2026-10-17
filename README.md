@@ -150,6 +150,7 @@ the morning summary and the nightly retrain go out.
 | `npm run email:test` | Email in and out through a real SMTP conversation |
 | `npm run auth:test` / `settings:test` | Sign-in, middleware, and every settings rule |
 | `npm run erasure:test` / `campaigns:test` / `outcomes:test` / `digest:test` | Erasure, campaigns with holdouts, closing jobs, the morning summary |
+| `npm test` | Typecheck plus every suite below; non-zero exit on any failure |
 | `npm run imports:test` | Loads every entry point first, each in a fresh process (catches import cycles) |
 
 ## Status

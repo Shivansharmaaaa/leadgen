@@ -60,7 +60,11 @@ async function main() {
     await db.update(leads).set({ updatedAt: new Date() }).where(eq(leads.id, recent.lead.id));
 
     console.log("\nLaunch");
-    const r = await launchReactivation(tenant.id, { campaign: "test-campaign", limit: 40 });
+    // Seeded, so the holdout check is decided by the code, not by luck (30
+    // draws at 15% come up all-treatment about 1 time in 130).
+    let seed = 42;
+    const random = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+    const r = await launchReactivation(tenant.id, { campaign: "test-campaign", limit: 40, random });
     const assigned = await db.query.outreachAssignments.findMany({ where: eq(outreachAssignments.campaign, "test-campaign") });
     const chosenIds = new Set(assigned.map((a) => a.contactId));
     check("everyone with consent and a dormant lead is in the experiment", r.selected === 30 && assigned.length === 30, JSON.stringify({ selected: r.selected, assigned: assigned.length }));

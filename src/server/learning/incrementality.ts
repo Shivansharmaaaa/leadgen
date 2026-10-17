@@ -123,6 +123,8 @@ export async function assignCohort(args: {
   campaign: string;
   score: number;
   holdoutPct?: number;
+  /** Source of randomness; injectable so a test is not decided by luck. */
+  random?: () => number;
 }): Promise<"treatment" | "holdout" | "already_assigned"> {
   const existing = await db.query.outreachAssignments.findFirst({
     where: and(
@@ -132,7 +134,7 @@ export async function assignCohort(args: {
   });
   if (existing) return "already_assigned";
 
-  const cohort = Math.random() < (args.holdoutPct ?? DEFAULT_HOLDOUT_PCT) ? "holdout" : "treatment";
+  const cohort = (args.random ?? Math.random)() < (args.holdoutPct ?? DEFAULT_HOLDOUT_PCT) ? "holdout" : "treatment";
 
   await db.insert(outreachAssignments).values({
     tenantId: args.tenantId,
