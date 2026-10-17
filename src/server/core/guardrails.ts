@@ -69,6 +69,13 @@ const HUMAN_REQUEST_RE = new RegExp(
   "i",
 );
 
+/**
+ * "How much does it cost to talk to someone?" asks the price of a
+ * consultation; it is a buying question, not a demand for a human. On an
+ * immigration line it was handed to staff, and the caller lost the booking.
+ */
+const PRICE_OF_RE = /\b(?:cost|costs|charge|charges|fee|price|pay)\s+(?:me\s+|us\s+)?(?:anything\s+)?(?:to|for)\s+$/;
+
 const ANGER_MARKERS = [
   "unacceptable", "ridiculous", "furious", "appalling", "disgusted",
   "worst", "scam", "fraud", "never again", "terrible service",
@@ -124,7 +131,7 @@ export function screenInbound(body: string, settings: TenantSettings): InboundVe
   }
 
   const asked = text.match(HUMAN_REQUEST_RE);
-  if (asked) {
+  if (asked && !PRICE_OF_RE.test(text.slice(0, asked.index))) {
     return { escalate: true, reason: "escalation_trigger", trigger: asked[0] };
   }
 

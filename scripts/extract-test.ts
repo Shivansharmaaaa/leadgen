@@ -1,0 +1,48 @@
+import { extractIdentifiers, extractName } from "@/server/core/extract";
+
+/**
+ * Deterministic identifier harvesting: a name or number taken from what the
+ * caller said, before the turn, so booking can be offered on time and never
+ * under the wrong name.
+ *
+ *   npm run extract:test
+ */
+let failures = 0;
+function check(label: string, ok: boolean, detail = "") {
+  console.log(`  ${ok ? "✓" : "✗"} ${label}${detail ? `  — ${detail}` : ""}`);
+  if (!ok) failures++;
+}
+const is = (text: string, want: string | null) => {
+  const got = extractName(text);
+  check(`${JSON.stringify(text)} → ${want ?? "no name"}`, got === want, String(got));
+};
+
+console.log("\nNames stated outright");
+is("My name's Dana Reyes.", "Dana Reyes");
+is("my name is dana", "Dana");
+is("I'm Arjun Mehta.", "Arjun Mehta");
+is("this is Priya", "Priya");
+is("It's Jordan from Quincy", "Jordan");
+is("My name's Dana and my number is 617 555 0134", "Dana");
+is("Hi, I'm Brian, my furnace is out", "Brian");
+is("I'm Julian Okafor", "Julian Okafor");
+
+console.log("\nNot names");
+is("It's Tuesday at 10 that works", null);
+is("It is Saturday morning I want", null);
+is("It's tomorrow I need it", null);
+is("I'm Canadian, on a work permit", null);
+is("I'm British but I live in Dubai", null);
+is("I'm Indian, applying for a study permit", null);
+is("This is Express Entry stuff", null);
+is("I'm calling about my AC", null);
+is("I'm International, applying for a master's", null);
+
+console.log("\nNumbers");
+const us = extractIdentifiers("call me on 617 555 0134", "US").phones;
+check("a spoken US number is normalised", us.length === 1 && us[0] === "+16175550134", us.join(","));
+const uk = extractIdentifiers("my mobile is 07700 900123", "GB").phones;
+check("a UK mobile is normalised", uk.length === 1 && uk[0] === "+447700900123", uk.join(","));
+
+console.log(failures ? `\n✗ ${failures} check(s) failed` : "\n✓ all checks passed");
+process.exit(failures ? 1 : 0);

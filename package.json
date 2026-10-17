@@ -40,6 +40,7 @@
     "demo:seed": "tsx --env-file=.env scripts/demo-seed.ts",
     "calendar:test": "tsx --env-file=.env scripts/calendar-test.ts",
     "imports:test": "tsx scripts/imports-test.ts",
+    "extract:test": "tsx scripts/extract-test.ts",
     "test": "tsx scripts/test-all.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",

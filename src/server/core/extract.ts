@@ -52,6 +52,20 @@ const NOT_A_NAME = new Set([
   "calling", "looking", "trying", "wondering", "having", "getting", "going", "speaking", "interested",
   "fine", "good", "great", "okay", "ok", "sure", "sorry", "home", "available", "urgent", "about", "from",
   "with", "at", "in", "on", "for", "my", "your", "our", "it", "is", "and", "but", "or", "please",
+  // "It's Tuesday at 10", "it is Saturday I want": a time, not a person.
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "today", "tomorrow", "tonight",
+  "morning", "afternoon", "evening", "january", "february", "march", "april", "june", "july", "august",
+  "september", "october", "november", "december", "noon", "midday",
+  // "I'm Canadian, on a work permit": on an immigration or admissions line a
+  // nationality is the most common thing after "I'm", and the route never
+  // replaces a name once one is saved.
+  "american", "canadian", "british", "english", "scottish", "welsh", "irish", "indian", "pakistani",
+  "bangladeshi", "nepali", "nepalese", "chinese", "filipino", "filipina", "vietnamese", "korean", "japanese",
+  "nigerian", "ghanaian", "kenyan", "jamaican", "mexican", "brazilian", "colombian", "iranian", "iraqi",
+  "syrian", "afghan", "ukrainian", "russian", "polish", "romanian", "turkish", "egyptian", "moroccan",
+  "french", "german", "italian", "spanish", "portuguese", "australian", "punjabi", "tamil", "gujarati",
+  "international", "domestic", "overseas", "local", "new", "single", "married", "divorced", "retired",
+  "pregnant", "unemployed", "self-employed", "permanent", "express", "currently", "already", "still",
 ]);
 
 const titleCase = (w: string) => w[0].toUpperCase() + w.slice(1).toLowerCase();

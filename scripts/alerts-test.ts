@@ -39,6 +39,10 @@ async function main() {
   check("'it hurts my ears' is not an injury", !s("It hurts my ears, the noise").escalate);
   check("'I want to sue' still escalates", s("I want to sue you").escalate);
   check("'get me your manager' still escalates", s("Get me your manager now").escalate);
+  check("'how much does it cost to talk to someone?' is a price question", !s("How much does it cost to talk to someone?").escalate);
+  check("'what do you charge to speak to someone about…?' is too", !s("What do you charge to speak to someone about a study permit?").escalate);
+  check("'I want to talk to someone' still escalates", s("I want to talk to someone").escalate);
+  check("'it costs too much, let me talk to a person' still escalates", s("It costs too much, let me talk to a person").escalate);
   check("tenant trigger 'insurance claim' still escalates", s("this is an insurance claim").escalate);
   check("'I smell gas' is a safety escalation", s("I smell gas in the basement").safety === true);
   check("a CO alarm is a safety escalation", s("the CO alarm keeps going off").safety === true);
