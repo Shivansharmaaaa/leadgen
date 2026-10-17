@@ -20,10 +20,13 @@ the llama.cpp route:
   4. ollama create with models/leadgen-llama3.2.Modelfile's template
 
 Needs a llama.cpp checkout for the converter (a sparse clone of
-convert_hf_to_gguf.py, conversion/ and gguf-py/ is enough) and a
-llama-quantize binary: Ollama's Linux build ships one, `brew install
-llama.cpp` provides one on a Mac. Each intermediate is deleted as soon as the
-next exists; peak extra disk is about two full-precision copies.
+convert_hf_to_gguf.py, conversion/ and gguf-py/ is enough). Quantising uses
+llama-quantize when there is one (Ollama's Linux build ships it, `brew install
+llama.cpp` provides it on a Mac); without it, Ollama quantises the f16 GGUF
+itself (`ollama create --quantize`, llama.cpp's quantiser inside Ollama),
+which is the route on a Mac where Homebrew is unavailable. Each intermediate
+is deleted as soon as the next exists; peak extra disk is about two
+full-precision copies.
 """
 
 from __future__ import annotations
@@ -42,12 +45,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fetch_base import drop_tokens_beyond_vocab  # noqa: E402
 
 
-def find_quantizer(explicit: str | None) -> str:
-    candidates = [explicit, shutil.which("llama-quantize"), "/usr/local/lib/ollama/llama-quantize"]
-    for c in candidates:
+def find_quantizer(explicit: str | None) -> str | None:
+    """llama-quantize if there is one; None means let Ollama quantise."""
+    if explicit:
+        if not Path(explicit).exists():
+            raise SystemExit(f"--quantizer {explicit} not found")
+        return explicit
+    for c in [shutil.which("llama-quantize"), "/usr/local/lib/ollama/llama-quantize"]:
         if c and Path(c).exists():
             return c
-    raise SystemExit("llama-quantize not found — pass --quantizer, or `brew install llama.cpp`")
+    return None
 
 
 def main():
@@ -68,6 +75,7 @@ def main():
     if not converter.exists():
         raise SystemExit(f"{converter} not found — pass --llama-cpp <llama.cpp checkout>")
     quantizer = find_quantizer(args.quantizer)
+    print(f"quantising with {quantizer or 'ollama create --quantize'}")
 
     import torch
     from peft import PeftModel
@@ -108,17 +116,24 @@ def main():
                    check=True, env=env)
     shutil.rmtree(merged)
 
-    # 3. quantise to the stock model's format
-    qenv = {**os.environ, "LD_LIBRARY_PATH": str(Path(quantizer).parent)}
-    subprocess.run([quantizer, str(f16), str(quantised), args.quant], check=True, env=qenv)
-    f16.unlink()
-    print(f"✓ {quantised.name}")
-
-    # 4. serve with the template it was trained on
     stock = (ROOT / "models/leadgen-llama3.2.Modelfile").read_text()
-    (run / "Modelfile").write_text(re.sub(r"^FROM .*$", f"FROM {quantised}", stock, count=1, flags=re.M))
-    subprocess.run(["ollama", "create", tag, "-f", str(run / "Modelfile")], check=True)
-    quantised.unlink()
+    if quantizer:
+        # 3. quantise to the stock model's format
+        qenv = {**os.environ, "LD_LIBRARY_PATH": str(Path(quantizer).parent)}
+        subprocess.run([quantizer, str(f16), str(quantised), args.quant], check=True, env=qenv)
+        f16.unlink()
+        print(f"✓ {quantised.name}")
+
+        # 4. serve with the template it was trained on
+        (run / "Modelfile").write_text(re.sub(r"^FROM .*$", f"FROM {quantised}", stock, count=1, flags=re.M))
+        subprocess.run(["ollama", "create", tag, "-f", str(run / "Modelfile")], check=True)
+        quantised.unlink()
+    else:
+        # 3+4. Ollama quantises the f16 GGUF on import, with the same template.
+        (run / "Modelfile").write_text(re.sub(r"^FROM .*$", f"FROM {f16}", stock, count=1, flags=re.M))
+        subprocess.run(["ollama", "create", "--quantize", args.quant.lower(), tag, "-f", str(run / "Modelfile")],
+                       check=True)
+        f16.unlink()
     print(f"✓ ollama model {tag}")
 
 
