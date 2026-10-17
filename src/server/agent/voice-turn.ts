@@ -122,6 +122,11 @@ export type VoiceEvent =
   | { type: "done"; fullText: string; latencyMs: number; firstWordMs: number | null; provider: string; model: string }
   | { type: "error"; message: string };
 
+/** The caller says it is urgent, in so many words. */
+const URGENT = /\b(?:emergency|urgent(?:ly)?|asap|as soon as possible|right away|straight away|immediately)\b/i;
+/** Someone at home a fault is dangerous for: with FAULT, that makes it urgent. */
+const VULNERABLE = /\b(?:bab(?:y|ies)|infants?|newborn|toddlers?|kids?|children|elderly|grand(?:ma|pa|mother|father|parents?)|pregnant|sick|disabled|oxygen|freezing|heat ?wave)\b/i;
+
 /**
  * "I've got you booked for Saturday at 9", said with no booking made. The
  * caller hangs up believing it and nobody comes.
@@ -621,6 +626,21 @@ export async function* runVoiceTurn(opts: {
       `# Open slots, checked just now\n${JSON.stringify(result)}\n` +
       "When you offer times, offer two of THESE, by day and time, and no others. If there " +
       "are none, say so and offer a callback.",
+    );
+  }
+
+  /**
+   * "No heat at all and there's a baby in the house" is the most valuable job
+   * of the day. In 4 eval runs of 6 the 3B model met it with sympathy and
+   * "is someone home with the baby?", never saying it would be prioritised.
+   * Recognised by rule, as Gate 1 recognises safety, so the model is told.
+   */
+  const heard = latestInbound?.body ?? "";
+  if (URGENT.test(heard) || (FAULT.test(heard) && VULNERABLE.test(heard))) {
+    notes.push(
+      "# Urgent\nThis caller has an urgent problem. Say plainly that you'll treat it as urgent " +
+      "and get someone out as soon as possible, then offer the EARLIEST open slot. Do not ask " +
+      "who is looking after anyone; that is not your business.",
     );
   }
 
