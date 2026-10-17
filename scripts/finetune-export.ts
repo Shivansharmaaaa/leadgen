@@ -4,6 +4,7 @@ import { db, tenants, locations } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
 import { buildSystemPrompt } from "@/server/agent/prompt";
 import { VOICE_TOOLS } from "@/server/agent/voice-turn";
+import { PROMISE_PATTERNS } from "@/server/core/guardrails";
 
 /**
  * Export what the fine-tuning data has to match: the real voice system
@@ -50,6 +51,8 @@ async function main() {
   writeFileSync("data/finetune/prompt-kit.json", JSON.stringify({
     tools,
     template,
+    // Phrases Gate 2 always holds: build_dataset.py refuses any target using one.
+    holdPatterns: PROMISE_PATTERNS.map((re) => ({ source: re.source, flags: re.flags })),
     hvac: {
       business: tenant.settings?.businessName ?? tenant.name,
       agent: tenant.settings?.agentName ?? "Alex",

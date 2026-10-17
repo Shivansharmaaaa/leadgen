@@ -255,7 +255,7 @@ OPEN_FRAMES = [
     "Hi, I'm calling because {problem}{who}.", "Yeah hi, {problem}{who}. How soon can you get someone out?",
 ]
 ACKS = [
-    "Okay, {echo}, I'm sorry, that's no fun.", "Got it, {echo}. We can definitely help with that.",
+    "Okay, {echo}, I'm sorry, that's no fun.", "Got it, {echo}. We can help with that.",
     "Right, {echo}. That's something our techs see a lot.", "Okay, {echo}. Let's get someone out to you.",
     "Oh no, {echo}. Let's get that sorted.", "Got it, {echo}, we'll get that looked at.",
 ]
@@ -436,6 +436,21 @@ def eval_utterances() -> list[str]:
     return [s for t in turns for s in re.findall(r'"((?:[^"\\]|\\.)*)"', t)]
 
 
+def held_phrase(text: str, patterns: list[dict]) -> str | None:
+    """
+    The Gate 2 pattern this text would be held for, if any.
+
+    44 targets of the overnight set said "we can definitely help", and Gate 2
+    always holds "definitely" as an unauthorised promise: the fine-tune learnt
+    to write replies production refuses to send. The patterns come from
+    guardrails.ts via the prompt kit, so the two cannot drift apart.
+    """
+    for p in patterns:
+        if re.search(p["source"], text, re.I if "i" in p.get("flags", "") else 0):
+            return p["source"]
+    return None
+
+
 def _norm(s: str) -> str:
     s = s.lower().replace("$89", "eighty-nine").replace("-", " ")
     return re.sub(r"[^a-z ]", "", s).strip()
@@ -539,6 +554,25 @@ def main():
         dest = "valid" if i % 8 == 0 else "train"
         for ex in conversion_dialogue(kit, rng):
             rows[dest].append(finalize(ex, tools, "conversion", f"conv_{i}"))
+
+    # No target may teach a phrase Gate 2 always holds. Our own generators
+    # must never produce one; a real SGD line that does is dropped, not edited.
+    patterns = kit.get("holdPatterns")
+    if not patterns:
+        raise SystemExit("prompt-kit.json has no holdPatterns — re-run scripts/finetune-export.ts")
+    for split in rows:
+        kept, dropped = [], 0
+        for r in rows[split]:
+            hit = held_phrase(r["target"].get("content") or "", patterns)
+            if hit and r["source"] != "sgd":
+                raise SystemExit(f"{r['source']}:{r['kind']} target would be held by Gate 2 ({hit}): {r['completion'][:120]!r}")
+            if hit:
+                dropped += 1
+                continue
+            kept.append(r)
+        rows[split] = kept
+        if dropped:
+            print(f"{split}: dropped {dropped} SGD target(s) Gate 2 would hold")
 
     leaks = find_leaks(eval_utterances(), rows["train"])
     if leaks:

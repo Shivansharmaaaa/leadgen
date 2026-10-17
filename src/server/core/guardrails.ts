@@ -169,6 +169,25 @@ const CURRENCY_SYMBOL_RE = /[$£€]\s?\d|\d\s?(?:dollars|pounds|quid|usd|cad|gb
 const CLOCK = String.raw`(?:\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\bat\s+\d{1,2}(?::\d{2})?\b)`;
 const SLOT_CHOICE_RE = new RegExp(`${CLOCK}[^.?!]{0,40}\\bor\\b[^.?!]{0,40}${CLOCK}`, "i");
 
+/**
+ * Unqualified guarantees. The agent has no standing to promise these.
+ * Exported (and written into the fine-tuning prompt kit) so no training
+ * target can teach the model a phrase this gate will always hold.
+ */
+export const PROMISE_PATTERNS: RegExp[] = [
+  /\b(?:i|we)\s+guarantee\b/i,
+  /\bdefinitely\b/i,
+  /\bcertainly can\b/i,
+  /\b100%\s+(?:sure|certain|guaranteed)\b/i,
+  /\bno charge\b/i,
+  /\bfree of charge\b/i,
+  /\bi promise\b/i,
+  /\bwill absolutely\b/i,
+  /\bguaranteed to\b/i,
+  // Committing to a visit without a booked slot is the expensive version of this.
+  /\b(?:we|someone)\s+(?:can|will)\s+(?:come|be)\s+(?:out\s+)?(?:tomorrow|today|this\s+\w+day)\b/i,
+];
+
 export function screenOutbound(
   body: string,
   settings: TenantSettings,
@@ -196,21 +215,7 @@ export function screenOutbound(
     }
   }
 
-  // Unqualified guarantees. The agent has no standing to promise these.
-  const promises = [
-    /\b(?:i|we)\s+guarantee\b/i,
-    /\bdefinitely\b/i,
-    /\bcertainly can\b/i,
-    /\b100%\s+(?:sure|certain|guaranteed)\b/i,
-    /\bno charge\b/i,
-    /\bfree of charge\b/i,
-    /\bi promise\b/i,
-    /\bwill absolutely\b/i,
-    /\bguaranteed to\b/i,
-    // Committing to a visit without a booked slot is the expensive version of this.
-    /\b(?:we|someone)\s+(?:can|will)\s+(?:come|be)\s+(?:out\s+)?(?:tomorrow|today|this\s+\w+day)\b/i,
-  ];
-  for (const re of promises) {
+  for (const re of PROMISE_PATTERNS) {
     if (re.test(body)) violations.push(`unauthorised promise: ${re.source}`);
   }
 
