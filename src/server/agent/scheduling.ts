@@ -39,6 +39,9 @@ export const BOOKING_INTENT = new RegExp([
   String.raw`\b(?:earliest|soonest)\s+(?:available|opening|appointment|slot|time|visit|you(?:'ve| have| can| could| got)?)\b`,
   String.raw`\bnext\s+(?:available|opening|appointment|slot)\b`,
   String.raw`\bany (?:openings|availability|slots|appointments|times)\b`,
+  // "Okay, what times do you have?" opened with "Okay" and went to the chat
+  // tier, which has no calendar: 4 of ~1,000 replayed turns.
+  String.raw`\bwhat (?:times?|days?|slots?|dates?)\s+(?:do|have|are|would|could|can|is)\b`,
   String.raw`\bbook (?:me|us|him|her|them) in\b`,
 ].join("|"), "i");
 
