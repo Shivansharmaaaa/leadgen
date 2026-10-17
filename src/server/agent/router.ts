@@ -1,5 +1,6 @@
 import { resolveFastPath, type FastPath } from "./fast-path";
 import { screenScope, type ScopeVerdict } from "@/server/core/scope";
+import { FAULT } from "./scheduling";
 
 /**
  * Turn router.
@@ -34,8 +35,6 @@ export type Route = {
   scope?: ScopeVerdict;
 };
 
-/** A described fault is the start of a job. */
-export const FAULT = /\b(not (?:working|cooling|heating)|broken|leak|smell|noise|no heat|blowing warm|stopped working)\b/i;
 
 /** Turns that plainly need a tool, a price, or a commitment. */
 const TRANSACTIONAL = [

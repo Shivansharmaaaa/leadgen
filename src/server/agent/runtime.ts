@@ -9,6 +9,7 @@ import type { Channel } from "@/server/core/types";
 import { buildSystemPrompt } from "./prompt";
 import { recall } from "@/server/memory/store";
 import { TOOL_DEFS, executeTool, availabilityChecked, type AgentContext } from "./tools";
+import { openSlotsNote } from "./scheduling";
 import { getProvider, type LlmHistory, type ToolSpec, LlmError } from "./providers";
 
 const MAX_TOOL_ITERATIONS = 6;
@@ -140,7 +141,7 @@ export async function runAgentTurn(opts: {
   // greets again: "Hi Priya, it's Alex at Northside... Hi Priya! Thanks for
   // reaching out!" Per-turn context, so the cached system prompt is untouched.
   const firstTouch = latestInbound?.meta?.businessInitiated === true;
-  const context = firstTouch
+  let context = firstTouch
     ? `${built.context}\n\nThis person filled in a form; you are writing to them first. Your reply is ` +
       "sent straight after a line that already greets them by name and says who you are, so do not " +
       "greet them, thank them for getting in touch, or introduce yourself: go straight to what they asked for."
@@ -159,6 +160,20 @@ export async function runAgentTurn(opts: {
   }
 
   const toolRecords: ToolCallRecord[] = [];
+  // Times come from the calendar, not the model: the 3B model offered slots
+  // without calling check_availability and Gate 2 held the reply. In text the
+  // playbook pushes for a visit on almost any turn ("too expensive" -> "how
+  // about Tuesday at 9?"), so a keyword gate missed cases (3 held in one eval
+  // run): read it on every turn that reaches the model. After Gate 1, so a
+  // gas leak or a refund never touches the calendar; appended, so the
+  // form-lead note above survives; nothing when the tenant has no hours.
+  {
+    const slots = await openSlotsNote(ctx);
+    if (slots) {
+      toolRecords.push(slots.record);
+      context += `\n\n${slots.note}`;
+    }
+  }
   let totalIn = 0, totalOut = 0, totalCacheRead = 0;
   let escalated = false;
   let finalText = "";

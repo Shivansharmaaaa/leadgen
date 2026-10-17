@@ -12,7 +12,8 @@ import { getProvider, type LlmHistory, type ToolSpec } from "./providers";
 import { qualifyFromTranscript } from "./post-turn";
 import { screenScope, overBudget, MAX_AI_TURNS, readAgreement } from "@/server/core/scope";
 import { resolveFastPath, cleanContinuation } from "./fast-path";
-import { routeTurn, FAULT } from "./router";
+import { routeTurn } from "./router";
+import { FAULT, slotOffered, schedulingInPlay as inPlay, openSlotsNote } from "./scheduling";
 
 /**
  * Low-latency agent turn for spoken channels.
@@ -234,25 +235,8 @@ export async function* runVoiceTurn(opts: {
     tenant, contactId: contact.id, conversationId: conversation.id, location,
   };
 
-  // Has a time already been put in front of this caller? Only then can they
-  // have chosen one.
-  const offeredSlot = ordered.some(
-    (m) => m.direction === "outbound" && /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i.test(m.body),
-  );
-  const JOB_REQUEST = /\b(?:need|want|get|send|have) (?:someone|somebody|a (?:tech|technician|engineer))\b|\b(?:service|repair|fix|replace|install|check|look at|tune up)\s+(?:my|the|our|a new|a|an)\b|\b(?:tune[- ]?ups?|maintenance|servicing)\b/i;
-  const SCHEDULING = /\b(?:book|schedule|appointment|come out|come round|visit|availability|when can|what times?|slots?|today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|asap|as soon as|emergency|urgent)\b/i;
-  const schedulingInPlay =
-    offeredSlot ||
-    ordered.slice(-4).some((m) => SCHEDULING.test(m.body)) ||
-    // A described fault is a job: "no heat and a baby in the house" needs a
-    // time today, and without the tool the model can only promise vaguely.
-    ordered.slice(-4).some((m) => m.direction === "inbound" && FAULT.test(m.body)) ||
-    // So is asking for work: "I need someone to service my heat pump", then
-    // "what have you got?". A verb needs an object ("install my", "fix the"),
-    // so "what brands do you install" stays a product question.
-    ordered.slice(-4).some((m) => m.direction === "inbound" && JOB_REQUEST.test(m.body)) ||
-    // The agent itself offered a visit, e.g. the product answer above.
-    ordered.slice(-2).some((m) => m.direction === "outbound" && /\bset up (?:that|a) visit|book (?:you|a|that)\b/i.test(m.body));
+  const offeredSlot = slotOffered(ordered);
+  const schedulingInPlay = inPlay(ordered);
   const activeTools = toolsFor({
     hasName: Boolean(contact.displayName),
     hasPhone: Boolean(contact.primaryPhone),
@@ -615,18 +599,12 @@ export async function* runVoiceTurn(opts: {
    */
   const toolRecords: ToolCallRecord[] = [];
   if (schedulingInPlay && activeTools.some((t) => t.name === "check_availability")) {
-    const t0 = Date.now();
-    const input = { service: "service visit" };
-    const result = await executeTool(ctx, "check_availability", input)
-      .catch((e) => ({ ok: false, error: String(e) }));
-    const ms = Date.now() - t0;
-    toolRecords.push({ name: "check_availability", input, output: result, ms });
-    yield { type: "tool", name: "check_availability", ok: (result as { ok?: boolean }).ok !== false, ms };
-    notes.push(
-      `# Open slots, checked just now\n${JSON.stringify(result)}\n` +
-      "When you offer times, offer two of THESE, by day and time, and no others. If there " +
-      "are none, say so and offer a callback.",
-    );
+    const slots = await openSlotsNote(ctx);
+    if (slots) {
+      toolRecords.push(slots.record);
+      yield { type: "tool", name: "check_availability", ok: true, ms: slots.record.ms };
+      notes.push(slots.note);
+    }
   }
 
   /**
