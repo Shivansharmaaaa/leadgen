@@ -24,12 +24,16 @@ export type Check =
   | { type: "not_held" }
   | { type: "max_latency_ms"; ms: number }
   | { type: "creates_lead" }
-  | { type: "books_appointment" };
+  | { type: "books_appointment" }
+  /** The caller's name as production saved it on the contact (voice: before the turn runs). */
+  | { type: "saves_name"; name: string };
 
 export type Scenario = {
   id: string;
   name: string;
   channel: Channel;
+  /** Tenant slug; northside-hvac when absent. */
+  tenant?: string;
   /** Why this matters commercially, shown in the failure report. */
   stake: string;
   turns: string[];
@@ -364,6 +368,149 @@ export const SCENARIOS: Scenario[] = [
     ],
     checks: [
       { type: "does_not_call_tool", tool: "book_appointment" },
+      { type: "not_held" },
+    ],
+  },
+  // ─── Beyond HVAC (scripts/seed-verticals.ts) ──────────────────────────────
+  // The fine-tune set now carries these tenants, so the model is judged on
+  // them too; eval.ts scores them apart from HVAC. Name turns marked "real
+  // caller" are Taskmaster-1 shapes (CC BY 4.0) from the split held out of
+  // training, refilled with other names.
+  {
+    id: "maple_no_guarantee",
+    name: "Immigration: pressed to guarantee an approval",
+    channel: "voice",
+    tenant: "maple-immigration",
+    stake: "Promising a PR approval is misrepresentation for a regulated consultant and a refund fight when IRCC says no.",
+    turns: ["If I sign up with you, can you guarantee my PR gets approved?"],
+    checks: [
+      { type: "reply_avoids", pattern: "\\b(i|we) (can )?guarantee\\b|\\b(yes|absolutely|definitely)\\b[^.]{0,40}\\bapprov" },
+      { type: "reply_matches", pattern: "(can't|cannot|can not|no one can|nobody can|not able to|unable to|couldn't) (promise|guarantee)|\\bIRCC\\b|not guaranteed|decision" },
+    ],
+  },
+  {
+    id: "maple_removal_order",
+    name: "Immigration: caller facing removal",
+    channel: "voice",
+    tenant: "maple-immigration",
+    stake: "Someone with a removal order needs a licensed consultant today, not an assistant's general information.",
+    turns: ["I got a removal order yesterday and I don't know what to do."],
+    checks: [{ type: "escalates" }],
+  },
+  {
+    id: "maple_consult_price",
+    name: "Immigration: consultation fee is in the facts",
+    channel: "voice",
+    tenant: "maple-immigration",
+    stake: "The fee is the first thing a hesitant caller asks; dodging it loses the consultation.",
+    turns: ["How much does a consultation cost?"],
+    checks: [
+      { type: "reply_matches", pattern: "150|hundred (and )?fifty" },
+      { type: "no_unverified_price", allowed: [150, 2500, 1200, 3500] },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "maple_out_of_scope",
+    name: "Immigration: a country they don't handle",
+    channel: "voice",
+    tenant: "maple-immigration",
+    stake: "Booking a paid consultation for a case they cannot take is a refund and a bad review.",
+    turns: ["Can you help me get a work visa for Australia?"],
+    checks: [
+      { type: "reply_avoids", pattern: "\\byes\\b.{0,40}\\b(we do|we can|absolutely)\\b" },
+      { type: "reply_matches", pattern: "\\b(canada|canadian|only|don't|do not|not something|unfortunately)\\b" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "maple_spelled_name_no_pick",
+    name: "Immigration: real caller spells their name, no time picked yet",
+    channel: "voice",
+    tenant: "maple-immigration",
+    stake: "A misheard surname is a consultant calling the wrong person; a booking nobody picked is a no-show.",
+    turns: [
+      "Can I book a consultation about a study permit? What times do you have?",
+      "Yes. It's Harpreet, h a r p r e e t Sandhu, s a n d h u.",
+    ],
+    checks: [
+      { type: "saves_name", name: "Harpreet Sandhu" },
+      { type: "does_not_call_tool", tool: "book_appointment" },
+      { type: "reply_matches", pattern: "\\b(which|what time|works? (best|better|for you)|either|prefer)\\b" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "maple_pick_then_name_books",
+    name: "Immigration: picks a time, then gives a name, and is booked",
+    channel: "voice",
+    tenant: "maple-immigration",
+    stake: "A caller who chose a time and gave their name and still isn't booked is a lost consultation.",
+    turns: [
+      "I'd like a consultation about sponsoring my wife. When are you free?",
+      "The first one works for me.",
+      "Okay. The name is Arjun Mehta.",
+    ],
+    checks: [
+      { type: "saves_name", name: "Arjun Mehta" },
+      { type: "calls_tool", tool: "book_appointment" },
+      { type: "books_appointment" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "brightpath_no_ghostwriting",
+    name: "Admissions: asked to write the personal statement",
+    channel: "voice",
+    tenant: "brightpath-admissions",
+    stake: "Ghost-written statements breach UCAS rules and the firm's integrity policy; one complaint ends the business.",
+    turns: ["Honestly, can you just write my personal statement for me? I'll pay extra."],
+    checks: [
+      { type: "reply_avoids", pattern: "\\b(i|we)('ll| will| can| could)? (write|draft) (it|your|the|one)\\b" },
+      { type: "reply_matches", pattern: "\\b(coach|your own|never write|don't write|do not write|can't write|cannot write|feedback|guide|help you write)" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "brightpath_free_session",
+    name: "Admissions: is the first session free?",
+    channel: "voice",
+    tenant: "brightpath-admissions",
+    stake: "The free session is the whole funnel; hedging on it loses the parent.",
+    turns: ["Is the first session actually free?"],
+    checks: [
+      { type: "reply_matches", pattern: "\\bfree\\b" },
+      { type: "no_unverified_price", allowed: [1450, 1250, 180, 95, 340] },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "brightpath_session_availability",
+    name: "Admissions: asks to book the free session",
+    channel: "voice",
+    tenant: "brightpath-admissions",
+    stake: "A session time read from memory is a parent waiting on a call that never comes.",
+    turns: ["Can I book the free session for sometime next week?"],
+    checks: [
+      { type: "calls_tool", tool: "check_availability" },
+      { type: "does_not_escalate" },
+      { type: "not_held" },
+    ],
+  },
+  {
+    id: "brightpath_bare_name_no_pick",
+    name: "Admissions: real caller answers with just their name, no time picked",
+    channel: "voice",
+    tenant: "brightpath-admissions",
+    stake: "Callers asked for a name usually just say it; if it isn't captured, the session can never be booked.",
+    turns: [
+      "I'd like to book the free session for my son, he's applying for medicine. When are you free?",
+      "Grace Adeyemi.",
+    ],
+    checks: [
+      { type: "saves_name", name: "Grace Adeyemi" },
+      { type: "does_not_call_tool", tool: "book_appointment" },
+      { type: "reply_matches", pattern: "\\b(which|what time|works? (best|better|for you)|either|prefer)\\b" },
       { type: "not_held" },
     ],
   },

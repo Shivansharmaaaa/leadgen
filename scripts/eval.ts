@@ -2,6 +2,19 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { SCENARIOS } from "@/server/eval/scenarios";
 import { runEval } from "@/server/eval/runner";
 
+// Escalations text the team and bookings schedule reminders; an eval must
+// never reach a real phone or inbox. Both are read at send time.
+delete process.env.TWILIO_ACCOUNT_SID;
+delete process.env.TWILIO_AUTH_TOKEN;
+delete process.env.SMTP_HOST;
+
+/**
+ * Voice scenarios run through POST /api/voice/stream since 17 Oct 2026 (name
+ * capture, caller ID, opt-out rule). Scores from the older direct path are not
+ * comparable; saved runs carry this label.
+ */
+const HARNESS = "voice-route-v1";
+
 const GREEN = "\x1b[32m", RED = "\x1b[31m", DIM = "\x1b[2m", RESET = "\x1b[0m", BOLD = "\x1b[1m";
 
 /**
@@ -10,6 +23,7 @@ const GREEN = "\x1b[32m", RED = "\x1b[31m", DIM = "\x1b[2m", RESET = "\x1b[0m", 
  *   npm run eval -- --voice           every scenario as a phone call, through
  *                                     the streaming path the live call uses
  *   npm run eval -- --tag lora-r16    label the run in the saved JSON
+ *   npm run eval -- maple_,brightpath_ --voice   only the non-HVAC tenants
  */
 async function main() {
   const args = process.argv.slice(2);
@@ -45,6 +59,21 @@ async function main() {
   }
 
   console.log("\n" + "─".repeat(76));
+  // HVAC and the other trades apart: a fine-tune can gain on one and lose on the other.
+  const byTenant = new Map<string, { passed: number; total: number; checks: number; checksTotal: number }>();
+  for (const r of report.scenarios) {
+    const t = byTenant.get(r.scenario.tenant ?? "northside-hvac") ?? { passed: 0, total: 0, checks: 0, checksTotal: 0 };
+    t.total++;
+    if (r.passed) t.passed++;
+    t.checks += r.results.filter((c) => c.passed).length;
+    t.checksTotal += r.results.length;
+    byTenant.set(r.scenario.tenant ?? "northside-hvac", t);
+  }
+  if (byTenant.size > 1) {
+    for (const [slug, t] of byTenant) {
+      console.log(`  ${slug.padEnd(24)} ${t.passed}/${t.total} scenarios  (${t.checks}/${t.checksTotal} checks)`);
+    }
+  }
   const pct = (report.passRate * 100).toFixed(0);
   const colour = report.passRate >= 0.9 ? GREEN : RED;
   console.log(
@@ -61,7 +90,7 @@ async function main() {
   mkdirSync("data/eval", { recursive: true });
   const file = `data/eval/${new Date().toISOString().replace(/[:.]/g, "-")}` +
     `_${report.model.replace(/[^a-z0-9.-]/gi, "_")}${tag ? `_${tag}` : ""}.json`;
-  writeFileSync(file, JSON.stringify({ tag, voice, ...report }, null, 2));
+  writeFileSync(file, JSON.stringify({ harness: HARNESS, tag, voice, byTenant: Object.fromEntries(byTenant), ...report }, null, 2));
   console.log(`${DIM}saved ${file}${RESET}\n`);
 
   process.exit(report.passRate >= 0.9 ? 0 : 1);
