@@ -92,8 +92,26 @@ export function personaFor(settings: TenantSettings | null | undefined, country 
 
 // ─── Reading the call ───────────────────────────────────────────────────────
 
-/** "Tuesday at 10 AM", "today at 3:30 PM", "9:30 AM". */
-const TIME = /\b(?:(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+)?\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)/gi;
+/**
+ * A time, in digits or spelled out the way the 3B model often writes it:
+ * "Tuesday at 10 AM", "11:30", "eleven o'clock in the morning", "half past
+ * two", "nine thirty", "two thirty in the afternoon". Never "ten minutes" or
+ * "two technicians": a spelled hour counts only with a minute word, o'clock,
+ * a.m./p.m. or a part of the day after it.
+ */
+const HOUR = String.raw`(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)`;
+const MINUTE = String.raw`(?:o'clock|oh[- ]five|fifteen|twenty(?:[- ]five)?|thirty|forty(?:[- ]five)?|fifty(?:[- ]five)?)`;
+const MERIDIEM = String.raw`(?:a\.m\.|p\.m\.|am\b|pm\b)`;
+const DAYPART = String.raw`(?:in the (?:morning|afternoon|evening)|tonight)`;
+const DAY = String.raw`(?:(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+)?`;
+const TIME = new RegExp(String.raw`\b${DAY}(?:` + [
+  String.raw`\d{1,2}(?::\d{2})?\s?${MERIDIEM}`,
+  String.raw`\d{1,2}:\d{2}\b`,
+  String.raw`\d{1,2}\s+o'clock`,
+  String.raw`${HOUR}\s+${MINUTE}\b(?:\s+${MERIDIEM}|\s+${DAYPART})?`,
+  String.raw`(?:half|quarter)\s+(?:past|to)\s+${HOUR}\b(?:\s+${DAYPART})?`,
+  String.raw`${HOUR}\s+(?:${MERIDIEM}|${DAYPART})`,
+].join("|") + String.raw`)(?:\s+${DAYPART})?|\bat\s+(?:noon|midday)\b`, "gi");
 /** "$89", "£1,450", "eighty-nine dollars", "a hundred and fifty dollars", "ninety-five pounds an hour". */
 const MONEY = /[$£€]\s?\d[\d,]*(?:\.\d{2})?|\b(?:(?:a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|and|[-\s])+)\s(?:dollars|pounds|euros|bucks)\b/gi;
 const PHONE = /(?:\+?\d[\d\s().-]{7,}\d)/g;
@@ -240,7 +258,7 @@ export function toInstruction(d: Delivery, persona: Persona): string {
 }
 
 /** Words inside a stressed span that carry no stress of their own. */
-const UNSTRESSED = /^(?:at|and|or|a|an|the|of|for|on|in|to|is|it's|am|pm|dollars|pounds|euros|bucks)$/i;
+const UNSTRESSED = /^(?:at|and|or|a|an|the|of|for|on|in|to|is|it's|am|pm|dollars|pounds|euros|bucks|o'clock|past|half|quarter|morning|afternoon|evening)$/i;
 
 /**
  * Kokoro's G2P (misaki) reads "[word](+1)" as a stress mark: tested through

@@ -63,6 +63,21 @@ check("… and both times are stressed", offer.emphasis.includes("Tuesday at 10 
 check("… with a beat before them", offer.pauseBeforeMs > 0);
 const price = plan("It's a hundred and fifty dollars for a forty-five-minute consultation.", "how much is it?", {}, pro);
 check("a price is stressed and slowed", price.emphasis.some((e) => e.includes("hundred and fifty dollars")) && price.rate < pro.baseRate, `${price.rate} ${price.emphasis.join("|")}`);
+const spelled = planDelivery("We've got an opening at eleven o'clock in the morning, or at half past two.", { heard: "when can you come?", index: 1, count: 2 }, alex);
+check("spelled-out times slow the sentence like digits do", spelled.rate < alex.baseRate, String(spelled.rate));
+check("… and both are stressed", spelled.emphasis.includes("eleven o'clock in the morning") && spelled.emphasis.includes("half past two"), spelled.emphasis.join("|"));
+for (const [said, want] of [
+  ["How about nine thirty?", "nine thirty"], ["I have two thirty in the afternoon.", "two thirty in the afternoon"],
+  ["Is Tuesday at ten a.m. okay?", "Tuesday at ten a.m."], ["We could do 11:30 instead.", "11:30"], ["We open at noon.", "at noon"],
+] as const) {
+  const d = plan(said, "");
+  check(`'${want}' is a time`, d.emphasis.includes(want), d.emphasis.join("|"));
+}
+for (const said of ["It takes about ten minutes.", "We have two technicians on today.", "One of our team will call.", "That's about thirty minutes away."]) {
+  check(`'${said}' has no time in it`, plan(said, "").emphasis.length === 0, plan(said, "").emphasis.join("|"));
+}
+check("a spoken time is stressed on the hour, not 'o'clock' or 'morning'",
+  kokoroStress("at eleven o'clock in the morning", ["eleven o'clock in the morning"]) === "at [eleven](+1) o'clock in the morning");
 const pounds = plan("It's fourteen hundred and fifty pounds for the package.", "and the package?", {}, sam);
 check("pounds are found too", pounds.emphasis.some((e) => e.includes("fourteen hundred and fifty pounds")), pounds.emphasis.join("|"));
 const ack = plan("Got it.", "my name's Dana");
