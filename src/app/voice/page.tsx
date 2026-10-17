@@ -90,7 +90,7 @@ export default function VoicePage() {
    * still speaking, and the rest of that reply went back into hiding.
    */
   /** `declined`: the server would not act on this guess (an opt-out). */
-  type SpecState = { confirmed: boolean; held: string[]; declined: boolean; inboundId?: string };
+  type SpecState = { confirmed: boolean; held: { text: string; plan?: SpeechPlan }[]; declined: boolean; inboundId?: string };
   const currentSpec = useRef<SpecState | null>(null);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -141,6 +141,8 @@ export default function VoicePage() {
    * "Let's see." before this.
    */
   const agentAudibleUntil = useRef(0);
+  /** Kokoro's default speed (its TTS_SPEED); a sentence's planned rate multiplies it. */
+  const engineSpeed = useRef(0.85);
   const spokenLog = useRef<{ text: string; at: number }[]>([]);
 
   useEffect(() => {
@@ -193,7 +195,10 @@ export default function VoicePage() {
   useEffect(() => {
     fetch("/api/voice/tts")
       .then((r) => r.json())
-      .then((d) => setTtsReady(Boolean(d?.ok)))
+      .then((d) => {
+        setTtsReady(Boolean(d?.ok));
+        if (typeof d?.speed === "number") engineSpeed.current = d.speed;
+      })
       .catch(() => setTtsReady(false));
     fetch("/api/voice/stt")
       .then((r) => r.json())
@@ -259,12 +264,12 @@ export default function VoicePage() {
     return audioCtx.current;
   }, []);
 
-  const fetchSpeech = useCallback(async (text: string): Promise<ArrayBuffer | null> => {
+  const fetchSpeech = useCallback(async (text: string, speed?: number): Promise<ArrayBuffer | null> => {
     try {
       const res = await fetch("/api/voice/tts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, ...(speed ? { speed } : {}) }),
       });
       if (!res.ok) return null;
       return await res.arrayBuffer();
@@ -290,10 +295,16 @@ export default function VoicePage() {
    * clips are appended to the timeline in the order they were spoken, however
    * the network returns them.
    */
-  const enqueueSpeech = useCallback((text: string) => {
+  const enqueueSpeech = useCallback((text: string, plan?: SpeechPlan, first = false) => {
     spokenLog.current = [...spokenLog.current.slice(-12), { text, at: Date.now() }];
     const queuedAt = performance.now();
-    const pending = fetchSpeech(text);
+    // The planned pace (voice/delivery.ts). Not on a reply's first sentence:
+    // the instant openers are pre-rendered at the default speed, and another
+    // speed would miss that cache and cost the first word. Not for a rate
+    // within 3% either, for the same reason.
+    const speed = plan && !first && Math.abs(plan.rate - 1) >= 0.03
+      ? Math.round(engineSpeed.current * plan.rate * 100) / 100 : undefined;
+    const pending = fetchSpeech(text, speed);
     let synthMs = 0;
     void pending.then(() => { synthMs = Math.round(performance.now() - queuedAt); });
     chain.current = chain.current.then(async () => {
@@ -307,12 +318,12 @@ export default function VoicePage() {
         src.connect(ac.destination);
 
         // Start where the last clip ends, or now if the queue has drained.
-        const startAt = Math.max(ac.currentTime + 0.02, nextStartAt.current);
+        const startAt = Math.max(ac.currentTime + 0.02, nextStartAt.current + (plan?.pauseBeforeMs ?? 0) / 1000);
         src.start(startAt);
         // How long after the text arrived this sentence is actually heard.
         const audibleIn = Math.round(performance.now() - queuedAt + (startAt - ac.currentTime) * 1000);
-        note("voice", `"${text.slice(0, 22)}" heard after ${audibleIn}ms (synthesis ${synthMs}ms)`);
-        nextStartAt.current = startAt + buffer.duration + PAUSE_AFTER(text);
+        note("voice", `"${text.slice(0, 22)}" heard after ${audibleIn}ms (synthesis ${synthMs}ms${speed ? `, speed ${speed}` : ""}${plan ? `, ${plan.style}` : ""})`);
+        nextStartAt.current = startAt + buffer.duration + (plan ? plan.pauseAfterMs / 1000 : PAUSE_AFTER(text));
 
         scheduled.current.push(src);
         src.onended = () => {
@@ -403,6 +414,7 @@ export default function VoicePage() {
     let spoken = "";
     let firstWordMs: number | null = null;
     let agentIndex = -1;
+    let sentenceNo = 0;
 
     try {
       const res = await fetch("/api/voice/stream", {
@@ -446,15 +458,17 @@ export default function VoicePage() {
           } else if (ev.type === "sentence") {
             cancelFiller();
             const sentence = String(ev.text);
+            const plan = ev.delivery as SpeechPlan | undefined;
+            const first = sentenceNo++ === 0;
             if (spec && !spec.confirmed) {
               // Ready, not spoken. Released only once the caller is confirmed
               // to have said what we guessed.
-              spec.held.push(sentence);
+              spec.held.push({ text: sentence, plan });
               continue;
             }
             firstWordMs ??= Number(ev.msSinceStart);
             spoken = spoken ? `${spoken} ${sentence}` : sentence;
-            enqueueSpeech(sentence);
+            enqueueSpeech(sentence, plan, first);
             setThinking(false);
 
             setThinking(false);
@@ -634,7 +648,7 @@ export default function VoicePage() {
     inflightSpec.current = null;
     setTurns((t) => [...t, { who: "you", text }]);
     const held = spec ? spec.held.splice(0) : [];
-    for (const sentence of held) enqueueSpeech(sentence);
+    held.forEach((h, i) => enqueueSpeech(h.text, h.plan, i === 0));
     if (held.length > 0) setThinking(false);
   }, [enqueueSpeech]);
 
@@ -1105,6 +1119,9 @@ export default function VoicePage() {
     </main>
   );
 }
+
+/** The part of a sentence's delivery plan (voice/delivery.ts) Kokoro can carry. */
+type SpeechPlan = { rate: number; pauseBeforeMs: number; pauseAfterMs: number; style: string };
 
 /** Something to say first, per business. */
 const EXAMPLES: Record<string, string> = {

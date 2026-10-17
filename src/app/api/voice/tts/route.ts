@@ -13,16 +13,20 @@ export const dynamic = "force-dynamic";
 const TTS_URL = process.env.TTS_URL ?? "http://127.0.0.1:8787";
 
 export async function POST(req: Request) {
-  const { text, voice } = (await req.json().catch(() => ({}))) as {
-    text?: string; voice?: string;
+  const { text, voice, speed } = (await req.json().catch(() => ({}))) as {
+    text?: string; voice?: string; speed?: number;
   };
+  // From the delivery plan: slower on times and prices, quicker on fillers.
+  // Clamped, and omitted when absent so Kokoro uses its default (and the
+  // pre-rendered openers stay cache hits).
+  const pace = typeof speed === "number" && Number.isFinite(speed) ? Math.min(1.3, Math.max(0.6, speed)) : undefined;
   if (!text?.trim()) return new Response("text required", { status: 400 });
 
   try {
     const res = await fetch(`${TTS_URL}/speak`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, voice: voice ?? process.env.TTS_VOICE }),
+      body: JSON.stringify({ text, voice: voice ?? process.env.TTS_VOICE, ...(pace ? { speed: pace } : {}) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) return new Response("tts failed", { status: 502 });

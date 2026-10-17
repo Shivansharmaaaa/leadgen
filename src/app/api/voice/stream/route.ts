@@ -2,11 +2,13 @@ import { eq } from "drizzle-orm";
 import { db, tenants, messages as messagesTable, conversations, contacts, events } from "@/server/db";
 import { detectConsentKeyword, optOutConfirmation } from "@/server/core/opt-out";
 import { outboundOpener, outboundReason } from "@/server/agent/outbound";
+import { personaFor, planDelivery } from "@/server/voice/delivery";
+import { screenInbound } from "@/server/core/guardrails";
 import { resolveContact } from "@/server/core/identity";
 import { extractIdentifiers, extractName } from "@/server/core/extract";
 import { linkIdentifierToContact } from "@/server/core/identity";
 import { extractMemories } from "@/server/memory/extract";
-import { runVoiceTurn } from "@/server/agent/voice-turn";
+import { runVoiceTurn, isUrgent } from "@/server/agent/voice-turn";
 import { and, desc, gte } from "drizzle-orm";
 
 export const runtime = "nodejs";
@@ -40,6 +42,13 @@ export async function POST(req: Request) {
     where: eq(tenants.slug, body.tenant ?? "northside-hvac"),
   });
   if (!tenant) return new Response("unknown tenant — run npm run seed", { status: 404 });
+  const persona = personaFor(tenant.settings, tenant.country);
+  /** A fixed reply as sentence events, each with its delivery plan. */
+  const planned = (reply: string, heard: string) =>
+    reply.split(/(?<=[.!?])\s+/).map((sentence, i) => ({
+      type: "sentence", text: sentence, msSinceStart: 0,
+      delivery: planDelivery(sentence, { heard, index: i }, persona),
+    }));
 
   const sessionId = body.sessionId ?? `browser_${Date.now()}`;
   const callerId = `+1555${String(hash(sessionId)).padStart(7, "0").slice(0, 7)}`;
@@ -101,7 +110,7 @@ export async function POST(req: Request) {
       meta: { outboundCall: { name, interest } },
     });
     return sse([
-      ...opener.split(/(?<=[.!?])\s+/).map((s) => ({ type: "sentence", text: s, msSinceStart: 0 })),
+      ...planned(opener, ""),
       { type: "done", fullText: opener, latencyMs: 0, firstWordMs: 0, provider: "rule", model: "outbound-opener" },
     ]);
   }
@@ -154,7 +163,7 @@ export async function POST(req: Request) {
       direction: "outbound", channel: "voice", authorType: "system", body: confirmation,
     });
     return sse([
-      ...confirmation.split(/(?<=[.!?])\s+/).map((s) => ({ type: "sentence", text: s, msSinceStart: 0 })),
+      ...planned(confirmation, text),
       { type: "done", fullText: confirmation, latencyMs: 0, firstWordMs: 0, provider: "rule", model: "opt-out" },
     ]);
   }
@@ -180,11 +189,23 @@ export async function POST(req: Request) {
       // it has to discard.
       send({ type: "inbound", id: inbound.id });
       try {
+        // How each sentence is spoken: pace, pauses, style (voice/delivery.ts).
+        // Planned here, where the turn's context is known, so the page only
+        // has to apply it.
+        let index = 0;
+        let booked = false;
+        const safety = Boolean(screenInbound(text, tenant.settings ?? {}).safety);
+        const urgent = isUrgent(text);
         for await (const ev of runVoiceTurn({
           conversationId: conversation!.id,
           inboundMessageId: inbound.id,
           speculative,
         })) {
+          if (ev.type === "tool" && ev.name === "book_appointment" && ev.ok) booked = true;
+          if (ev.type === "sentence") {
+            send({ ...ev, delivery: planDelivery(ev.text, { heard: text, index: index++, safety, booked, urgent }, persona) });
+            continue;
+          }
           send(ev);
         }
         completed = true;
