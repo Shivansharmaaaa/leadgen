@@ -45,7 +45,9 @@ export function extractIdentifiers(text: string, country = "US"): ExtractedIdent
  * "call me"; after "I'm", "it's" or "this is" the name must be capitalised, so
  * "I'm calling about my AC" never produces a customer called "Calling".
  */
-const NAME_EXPLICIT = /\b(?:my name is|my name's|name is|name's|call me)\s+([A-Za-z][A-Za-z'-]*)(?:\s+([A-Za-z][A-Za-z'-]*))?/i;
+const NAME_EXPLICIT = /\b(?:my name is|my name's|name is|name's|call me|(?:it'?ll|it will) be under|put it under|under the name(?: of)?|name will be)\s+([A-Za-z][A-Za-z'-]*)(?:\s+([A-Za-z][A-Za-z'-]*))?/i;
+/** A name spelled out letter by letter after it is said: "Harpreet, h a r p r e e t". */
+const SPELLED_RUN = /,?\s*\b[A-Za-z](?:[\s-]+[A-Za-z]\b){1,}[.,]?(?=\s|$)/g;
 const NAME_IMPLICIT = /\b(?:[Tt]his is|[Ii]t's|[Ii]t is|I'm|I am)\s+([A-Z][a-z'-]+)(?:\s+([A-Z][a-z'-]+))?/;
 const NOT_A_NAME = new Set([
   "and", "a", "an", "the", "just", "not", "no", "so", "very", "really", "still", "also", "here", "there",
@@ -66,6 +68,7 @@ const NOT_A_NAME = new Set([
   "french", "german", "italian", "spanish", "portuguese", "australian", "punjabi", "tamil", "gujarati",
   "international", "domestic", "overseas", "local", "new", "single", "married", "divorced", "retired",
   "pregnant", "unemployed", "self-employed", "permanent", "express", "currently", "already", "still",
+  "you", "we", "they", "he", "she", "can", "be", "if",
 ]);
 
 const titleCase = (w: string) => w[0].toUpperCase() + w.slice(1).toLowerCase();
@@ -82,29 +85,65 @@ const NOT_A_BARE_NAME = /\d|\b(?:yes|yeah|yep|no|nope|sure|okay|ok|first|second|
  * nine", "the first one" and "yes" answer a different question. A spelled-out
  * surname after it ("Tori, t o r i") is dropped.
  */
-export function extractName(text: string, opts: { lastAgentLine?: string | null } = {}): string | null {
+export function extractName(raw: string, opts: { lastAgentLine?: string | null } = {}): string | null {
+  // "It's Harpreet, h a r p r e e t Sandhu, s a n d h u." → "It's Harpreet Sandhu."
+  const text = raw.replace(SPELLED_RUN, "").replace(/\s{2,}/g, " ");
+  const asked = Boolean(opts.lastAgentLine && NAME_QUESTION.test(opts.lastAgentLine));
+  // "My first name is Billy, my last name is Beane": "name is Billy" alone loses the surname.
+  const split = firstAndLast(text, asked);
+  if (split) return split;
   const m = text.match(NAME_EXPLICIT) ?? text.match(NAME_IMPLICIT);
-  if (m) {
-    if (NOT_A_NAME.has(m[1].toLowerCase())) return null;
+  if (m && !NOT_A_NAME.has(m[1].toLowerCase())) {
     const parts = [m[1]];
     if (m[2] && !NOT_A_NAME.has(m[2].toLowerCase())) parts.push(m[2]);
     return parts.map(titleCase).join(" ");
   }
-  if (!opts.lastAgentLine || !NAME_QUESTION.test(opts.lastAgentLine)) return null;
-  const bare = text.trim()
-    .replace(/^(?:(?:oh|um|uh|so|yeah|yes|sure|okay|ok|it'?s|it is)\b[\s,]*)+/i, "")
-    .replace(/[.!?]+$/, "")
-    .trim();
-  if (!bare || NOT_A_BARE_NAME.test(bare)) return null;
-  let words = bare.split(/[\s,]+/).filter(Boolean);
-  // "Tori t o r i": a run of single letters spelling one of the words.
-  const firstLetter = words.findIndex((w) => w.length === 1);
-  if (firstLetter > 0 && words.slice(firstLetter).every((w) => w.length === 1)) {
-    const spelled = words.slice(firstLetter).join("").toLowerCase();
-    if (words.slice(0, firstLetter).some((w) => w.toLowerCase() === spelled)) words = words.slice(0, firstLetter);
+  return asked ? bareName(text) : null;
+}
+
+/** "First name Will", and "my last name is McCormick" after a first name. */
+const FIRST_NAME = /\bfirst name(?:'s| is)?\s+([A-Za-z][A-Za-z'-]*)/i;
+const LAST_NAME = /\b(?:last|sur) ?name(?:'s| is)?\s+([A-Za-z][A-Za-z'-]*)/i;
+/** What callers say before a name when asked for one. */
+const LEAD_IN = /^(?:(?:oh|um|uh|so|yeah|yes|yep|sure|okay|ok|of course|certainly|right|alright|it'?s|its|it is|that'?s|that is|this is|the name is|name is|name)\b[\s,.!]*)+/i;
+
+/** "…and my last name is Real": the surname stated apart from the first name. */
+function firstAndLast(text: string, asked: boolean): string | null {
+  const last = text.match(LAST_NAME)?.[1];
+  const first = text.match(FIRST_NAME)?.[1];
+  if (last && !NOT_A_NAME.has(last.toLowerCase())) {
+    const before = text.slice(0, text.search(LAST_NAME));
+    const m = before.match(NAME_EXPLICIT) ?? before.match(NAME_IMPLICIT);
+    const given = first ?? m?.[1] ?? (asked ? bareName(before)?.split(" ")[0] : undefined);
+    if (given && !NOT_A_NAME.has(given.toLowerCase())) return `${titleCase(given)} ${titleCase(last)}`;
+  }
+  if (first && !NOT_A_NAME.has(first.toLowerCase())) return titleCase(first);
+  return null;
+}
+
+/** Said after the name and before the number: "John Smith. It's 689…", "Tori Childs. Yes, 215…". */
+const TRAIL_OUT = /[\s,.!?]*\b(?:it'?s|its|it is|and|yeah|yes|that'?s|(?:my\s+)?(?:last|first|sur) ?name(?:'s| is)?)[\s,.!?]*$/i;
+
+/** The answer to "can I get your name?": a name on its own, perhaps with their number after it. */
+function bareName(text: string): string | null {
+  const cut = text
+    // A number after the name: extractIdentifiers takes that part.
+    .replace(/\d[\s\S]*$/, "")
+    .replace(/\b(?:and\s+)?(?:my\s+|the\s+)?(?:phone\s+|cell\s+|mobile\s+)?(?:number|no\.?)(?:\s+is)?[\s,.]*$/i, "")
+    .replace(LEAD_IN, "")
+    .replace(/[\s,.!?]+$/, "");
+  let trimmed = cut;
+  for (let prev = ""; prev !== trimmed;) { prev = trimmed; trimmed = trimmed.replace(TRAIL_OUT, ""); }
+  if (!trimmed || NOT_A_BARE_NAME.test(trimmed)) return null;
+  // Initials go; a name said twice ("Larry Larry Phillips", "Chester Parrot Chester Parrot") counts once.
+  let words = trimmed.split(/[\s,.]+/).filter((w) => w.length > 1);
+  words = words.filter((w, i) => i === 0 || w.toLowerCase() !== words[i - 1].toLowerCase());
+  const half = words.length / 2;
+  if (words.length % 2 === 0 && words.slice(0, half).join(" ").toLowerCase() === words.slice(half).join(" ").toLowerCase()) {
+    words = words.slice(0, half);
   }
   if (words.length === 0 || words.length > 3) return null;
-  if (!words.every((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w) && w.length > 1)) return null;
+  if (!words.every((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w))) return null;
   if (words.some((w) => NOT_A_NAME.has(w.toLowerCase()))) return null;
   return words.map(titleCase).join(" ");
 }

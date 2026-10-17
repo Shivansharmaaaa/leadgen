@@ -27,6 +27,13 @@ is("My name's Dana and my number is 617 555 0134", "Dana");
 is("Hi, I'm Brian, my furnace is out", "Brian");
 is("I'm Julian Okafor", "Julian Okafor");
 
+is("Yes. It's Harpreet, h a r p r e e t Sandhu, s a n d h u.", "Harpreet Sandhu");
+is("Yes, it will be under Grace Adeyemi.", "Grace Adeyemi");
+is("Put it under Sam Carter please", "Sam Carter");
+is("Under the name of Leila Ahmadi.", "Leila Ahmadi");
+is("Put it under my wife's name", null);
+is("I'm a nurse, I work nights", null);
+
 console.log("\nNot names");
 is("It's Tuesday at 10 that works", null);
 is("It is Saturday morning I want", null);
@@ -54,6 +61,19 @@ asked("Nine thirty.", "What name should I put it under?", null);
 asked("Grace Fontaine.", "Which time works better for you?", null);
 asked("I want a refund for my visit", "Can I get your name?", null);
 is("Grace Fontaine.", null);
+
+// Real answers to a name question, from Taskmaster-1 (CC BY 4.0, train split; see finetune/README.md).
+// Measured over all 258 bank lines: 250 exact, none wrong; 45 of 48 held-out lines exact, none wrong.
+const ASKED = "Can I get your name for the booking?";
+asked("Mike Jones 281-330-8004.", ASKED, "Mike Jones");
+asked("Of course. Lola Smith.", ASKED, "Lola Smith");
+asked("John Smith. It's 689-155-1234.", ASKED, "John Smith");
+asked("No, it's Burt b u r t and my last name is Real r e a l.", ASKED, "Burt Real");
+asked("My first name is Billy. My last name is Beane. b e a n e.", ASKED, "Billy Beane");
+asked("Chester parrot Chester parrot, p a r r o t.", ASKED, "Chester Parrot");
+asked("Larry Larry Phillips.", ASKED, "Larry Phillips");
+asked("Sure, Tori t o r i Childs c h i l d s. Yes, 215-884-1482.", ASKED, "Tori Childs");
+is("Mike Jones 281-330-8004.", null);
 
 console.log("\nNumbers");
 const us = extractIdentifiers("call me on 617 555 0134", "US").phones;
