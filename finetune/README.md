@@ -105,9 +105,9 @@ results carried across turns. The pipeline now is:
    not offer), split by dialogue, at most 40 rows of one kind per tenant so
    the booking steps don't swamp objections and facts, packed.
 
-The set built for the next run (600 calls): 2,622 rendered rows, 596 calls
-complete (4 "what times do you have?" turns routed without the calendar note,
-6 questions the fast path answers by rule); 1,356 train rows (1,267 sequences, 3.05M tokens, longest 3,451) and
+The set built for the next run (600 calls, after 5b95ee9): 2,641 rendered
+rows, all 600 calls complete (6 questions the fast path answers by rule give
+no row); 1,358 train rows (1,271 sequences, ~3.06M tokens, longest ~3,450) and
 324 held-out rows from 71 calls held out by a hash of their id.
 
 Loss is taken only on the assistant's steps. Schema-Guided Dialogue (Google,
