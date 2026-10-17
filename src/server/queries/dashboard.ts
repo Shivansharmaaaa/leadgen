@@ -94,6 +94,8 @@ export async function getDashboard(tenantSlug: string, days = 30) {
   let leadsNotTexted = 0;
   for (const e of evs.filter((e) => e.type === "lead_intake")) {
     const consent = e.payload.consent as { sms?: boolean; problems?: string[] } | undefined;
+    // Only leads that could have been texted: an email-only lead was answered by email.
+    if (e.payload.channel === "email") continue;
     if (consent && consent.sms === false) {
       leadsNotTexted++;
       for (const p of consent.problems ?? []) formProblems.set(p, (formProblems.get(p) ?? 0) + 1);

@@ -269,7 +269,7 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
     : "the agent produced no reply";
 
   await logIntake(tenantId, ingested.contactId, ingested.conversationId, {
-    dedupeKey, leadId, source: input.source, firstResponse, consent, reason: reason ?? null,
+    dedupeKey, leadId, source: input.source, channel, firstResponse, consent, reason: reason ?? null,
   });
   if (!ingested.duplicate) {
     await publish(tenantId, "lead.created", {

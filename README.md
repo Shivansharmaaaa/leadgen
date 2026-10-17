@@ -114,6 +114,9 @@ TWILIO_ACCOUNT_SID=... TWILIO_AUTH_TOKEN=...   # texts, alerts, calls
 ```
 
 `npm run doctor` lists what is set up, what isn't, and how to fix each.
+`npm run demo:seed` builds a demo business ("Harbor Heating & Cooling") with a
+day of activity through the real pipelines and sends nothing; view it with
+`TENANT_SLUG=demo-hvac npm run dev`.
 
 Then at `/settings`: add the team's mobiles (and who is on call), create an
 intake key, paste the chat snippet on the website and list the site, and add
