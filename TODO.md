@@ -97,7 +97,7 @@ marked with what actually happened, not what was intended.
 
 ## 5. Voice agent: unfinished (added by the voice session, 17 Oct 2026)
 
-Last voice commit: `8ff9a87` (hear in context, echo rejection, product answers, speculation fix).
+Voice commits tonight: `8ff9a87` (hear in context, echo, products), `955ba52` (fault opens scheduling), `b9341e9` (opt-out), `52659ec` (gas/handoff replies), `3222aec` + `d913e00` (booking actually books, at a real time).
 
 **Still HVAC-only, so these break for other trades** (the same kind of bug section 1 fixed in the prompt):
 - [x] Chat tier, `voice-turn.ts`: hardcoded "heating and cooling line" replaced with `settings.asrContext` (`03caae8`)
@@ -105,14 +105,19 @@ Last voice commit: `8ff9a87` (hear in context, echo rejection, product answers, 
 - [ ] `fast-path.ts` product FAQ looks up facts under HVAC key names (`products/AC system types` …). Another trade gets no fast answer and falls back to the model, which is safe but slower. Make it read the tenant's whole `products` category
 
 **Correctness**
+- [x] Booking on a call actually books (`3222aec`, `d913e00`). Before, a replayed call said "I've got you booked" with nothing booked, and the next one booked 5 AM. Fixed: answers to a booking question get the booking tools, a stated name is saved before the turn, and `book_appointment` only takes offered times. Verified end to end: Sat 9:00 AM and 10:00 AM booked exactly as said
+- [ ] 3B model quirks still heard on replays: "My name is Alex, and I'll be the one servicing your heat pump", "Saturday of next week" for tomorrow. These are wording problems, not wrong bookings, and need a stronger model or the LoRA
 - [x] `/voice` and `/api/voice/*` now require sign-in once `ADMIN_PASSWORD` is set (`484a14e`, training session). APIs get a JSON 401 and pages redirect to `/login`; production with no password fails closed; the Twilio voice webhook stays public, protected by its signature check. Dev without a password is unchanged (checked on :3100)
 - [x] Voice route crash (import cycle from `1cf3078`) fixed in `1643d02` by the training session. Gas, handoff and opt-out replies verified through the HTTP route, and everything is pushed (`1643d02`)
-- [ ] Screen each sentence before speaking it: replies are spoken while they stream, so the agent can say a time slot it made up before Gate 2 checks it against the tool. Check every sentence for times or prices that aren't in the tool results or facts before it goes to TTS
+- [x] Each sentence is screened before it is spoken (`3222aec`): a claimed booking with no successful `book_appointment` is dropped, "definitely"/"certainly" are removed, and "[Name]" template placeholders are cut. Times come from a calendar read done before the model runs, and `book_appointment` refuses times outside business hours. **Still open:** a spoken time is not yet checked against the slot list inside the sentence itself; the backstop is that booking refuses a time that isn't offered
 - [ ] Echo: the mic is captured raw so Parakeet hears clean speech. Echo is handled in software: capture starts after the agent's audio ends, and anything ≥60% like the agent's last 20 s of speech is dropped. If it still fires on laptop speakers, try `echoCancellation: true` and measure the WER cost (headphones avoid it entirely)
 - [x] `npm run eval` on `8ff9a87`: 88% (53/56) vs 92% (54/56) baseline. Voice `emergency_urgency` was our regression (the scheduling gate withheld the tool), fixed in `955ba52`
-- [ ] **When the GPU is free:** re-run `npm run eval` on `955ba52`. Then A/B the 4 product facts (`scripts/add-products.ts`), 3+ runs each. Webchat `objection_other_quotes` and `contact_capture` started being held for times offered without the tool after the facts went in; the failing reply quotes them
+- [x] Eval A/B on `d913e00`, 3 runs each, 60 checks: product facts ON 56/58/60 (mean 58.0), OFF 57/58/54 (mean 56.3). The facts don't cause the webchat failures; those happen as often without them. Facts stay
+- [x] `emergency_urgency` failed 4 of 6 A/B runs (sympathy, no urgency). Urgency is now recognised by rule and told to the model (`b0d9595`): 5/5
+- [ ] Webchat `contact_capture` (4/6) and `objection_other_quotes` (4/6): the text pipeline's 3B model offers times without calling check_availability, and Gate 2 holds the reply. Same cause as voice; the fix there was reading the calendar before generation (`3222aec`). `runtime.ts` is shared, so the training session has been asked before porting
 
 **Needs you to test live** (`localhost:3100/voice`)
+- [ ] A full booking: "I need someone to service my heat pump", pick one of the two times, give your name and number. You should hear the same time back, and an appointment should appear at that time (`3222aec`, `d913e00`)
 - [ ] Say "AC" or "what AC options do you have"; you should get product types and brands, not "bases" or appointment times
 - [ ] "okay can someone come out tomorrow" should get a booking, not a handover to a human
 - [ ] Talk over the agent mid-sentence; it should stop. Say "mm-hm" while it talks; it should keep going
@@ -120,7 +125,7 @@ Last voice commit: `8ff9a87` (hear in context, echo rejection, product answers, 
 - [ ] "Please don't call me again" should get the opt-out confirmation (`b9341e9`), and a bare "stop" while it talks should only interrupt it. Then "don't call me, text me instead" should go to the agent, not opt you out
 
 **Not started / parked**
-- [!] Kokoro TTS (:8787) and Parakeet STT (:8789) are **stopped**, and live voice is paused, to free memory for the overnight LoRA run. Restart with `npm run tts` and `npm run stt` once the training session hands the GPU back
+- [x] Kokoro TTS (:8787) and Parakeet STT (:8789) are running again now that the LoRA run is done (`npm run tts`, `npm run stt`)
 - [ ] Moshi in the chat tier: model is in `models/moshi/` (q4), standalone demo works on :8998 (`moshi/.venv`), not wired into the app. Not running now
 - [ ] PDF with diagrams explaining everything built (you parked this)
 - [ ] Production latency: `ANTHROPIC_API_KEY` for the transact tier. Local models are dev-only: llama3.1:8b passes the key eval 1 time in 3
