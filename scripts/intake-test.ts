@@ -144,6 +144,14 @@ async function main() {
     const repeat = await intakeLead(tenant.id, { source: "website", externalId: "future-2", phone: "6175550160", message: "Also my thermostat" });
     check("an old reply in the same thread is not reported as this lead's reply", repeat.firstResponse === "not_sent", `${repeat.firstResponse}`);
 
+    console.log("\nMissed calls are leads too");
+    const { sendMissedCallTextBack } = await import("@/server/features/missed-call");
+    await sendMissedCallTextBack({ tenantId: tenant.id, fromNumber: "+16175550170", providerCallId: "CA-miss-1" });
+    await sendMissedCallTextBack({ tenantId: tenant.id, fromNumber: "+16175550170", providerCallId: "CA-miss-2" });
+    const missLeads = await db.query.leads.findMany({ where: and(eq(leads.tenantId, tenant.id), eq(leads.source, "missed_call")) });
+    check("a missed call becomes a lead, sourced 'missed_call'", missLeads.length === 1);
+    check("ringing twice doesn't make two leads", missLeads.length === 1);
+
     console.log("\nEmail-only lead");
     const c = await intakeLead(tenant.id, { source: "facebook_lead_ad", externalId: "fb-9", email: "Nora@Example.com", service: "Heat pump quote" });
     // No SMTP here: an email reply that passes the gate fails at the provider.

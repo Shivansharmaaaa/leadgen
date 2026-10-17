@@ -300,7 +300,7 @@ const FLAG_LABEL: Record<string, string> = {
 
 const SOURCE_LABEL: Record<string, string> = {
   website: "Website form", google_lsa: "Google Local Services", angi: "Angi", thumbtack: "Thumbtack",
-  facebook_lead_ad: "Facebook lead ads", zapier: "Zapier", other: "Other form",
+  facebook_lead_ad: "Facebook lead ads", zapier: "Zapier", other: "Other form", missed_call: "Missed calls",
   voice: "Phone calls", sms: "Texts", webchat: "Web chat", instagram: "Instagram",
   messenger: "Messenger", whatsapp: "WhatsApp", email: "Email",
 };

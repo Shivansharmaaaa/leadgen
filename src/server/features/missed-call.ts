@@ -1,5 +1,6 @@
-import { and, eq } from "drizzle-orm";
-import { db, conversations, events, tenants } from "@/server/db";
+import { and, eq, gte, inArray } from "drizzle-orm";
+import { db, conversations, events, leads, tenants } from "@/server/db";
+import { contactData, publish } from "./webhooks";
 import { resolveContact } from "@/server/core/identity";
 import { deliver } from "@/server/core/ingest";
 
@@ -54,6 +55,24 @@ export async function sendMissedCallTextBack(args: {
       basis: "service reply to an inbound call attempt",
     },
   });
+
+  // Someone ringing right now is the warmest lead there is. Without a lead
+  // row they were invisible to lead sources, cost per job, the CRM and
+  // reactivation. One open lead per person per month, not one per ring.
+  const open = await db.query.leads.findFirst({
+    where: and(eq(leads.tenantId, args.tenantId), eq(leads.contactId, contact.id),
+      inArray(leads.status, ["new", "qualified"]), gte(leads.createdAt, new Date(Date.now() - 30 * 86400_000))),
+  });
+  if (!open) {
+    const [lead] = await db.insert(leads).values({
+      tenantId: args.tenantId, contactId: contact.id, conversationId, sourceChannel: "voice", source: "missed_call",
+      summary: "Called and nobody answered; texted back.",
+    }).returning();
+    await publish(args.tenantId, "lead.created", {
+      lead_id: lead.id, source: "missed_call", conversation_id: conversationId, first_response: sent ? "sent" : "not_sent",
+      contact: await contactData(contact.id),
+    });
+  }
 
   return { sent };
 }
