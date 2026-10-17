@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { db, tenants, locations } from "@/server/db";
+import { db, tenants, locations, knowledgeFacts } from "@/server/db";
 import { loadKnowledge } from "@/server/core/knowledge";
 import { buildSystemPrompt } from "@/server/agent/prompt";
 import { VOICE_TOOLS } from "@/server/agent/voice-turn";
@@ -47,12 +47,35 @@ async function main() {
   const hvac = buildSystemPrompt({ tenant, contact: unknownContact, location, channel: "voice", knowledge });
   const hvacKnown = buildSystemPrompt({ tenant, contact: knownContact, location, channel: "voice", knowledge });
 
+  // Every tenant the dialogue generator writes for: its facts, so a reply that
+  // quotes a price can be checked against what is actually seeded.
+  const verticals: Record<string, unknown> = {};
+  for (const slug of ["northside-hvac", "maple-immigration", "brightpath-admissions"]) {
+    const t = await db.query.tenants.findFirst({ where: eq(tenants.slug, slug) });
+    if (!t) throw new Error(`tenant ${slug} not found — run npm run seed and scripts/seed-verticals.ts`);
+    const loc = await db.query.locations.findFirst({ where: eq(locations.tenantId, t.id) });
+    const facts = await db.query.knowledgeFacts.findMany({ where: eq(knowledgeFacts.tenantId, t.id) });
+    verticals[slug] = {
+      business: t.settings?.businessName ?? t.name,
+      agent: t.settings?.agentName ?? "Alex",
+      country: t.country,
+      timezone: loc?.timezone ?? t.timezone,
+      hours: loc?.hours ?? [],
+      currency: t.settings?.currency ?? null,
+      bookingNoun: t.settings?.bookingNoun ?? null,
+      outboundReasons: t.settings?.outboundReasons ?? {},
+      escalationTriggers: t.settings?.escalationTriggers ?? [],
+      facts: Object.fromEntries(facts.map((f) => [`${f.category}/${f.key}`, f.value])),
+    };
+  }
+
   mkdirSync("data/finetune", { recursive: true });
   writeFileSync("data/finetune/prompt-kit.json", JSON.stringify({
     tools,
     template,
     // Phrases Gate 2 always holds: build_dataset.py refuses any target using one.
     holdPatterns: PROMISE_PATTERNS.map((re) => ({ source: re.source, flags: re.flags })),
+    tenants: verticals,
     hvac: {
       business: tenant.settings?.businessName ?? tenant.name,
       agent: tenant.settings?.agentName ?? "Alex",
