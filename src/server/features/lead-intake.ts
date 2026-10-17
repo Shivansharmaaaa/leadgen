@@ -5,6 +5,7 @@ import { handleInbound } from "@/server/core/ingest";
 import { resolveContact } from "@/server/core/identity";
 import { normalizeEmail, normalizePhone } from "@/server/core/phone";
 import { contactData, publish } from "./webhooks";
+import { alertStaff } from "./staff-alerts";
 
 /**
  * FEATURE 7 — lead intake with an instant first response.
@@ -271,6 +272,15 @@ export async function intakeLead(tenantId: string, input: LeadIntake): Promise<I
   await logIntake(tenantId, ingested.contactId, ingested.conversationId, {
     dedupeKey, leadId, source: input.source, channel, firstResponse, consent, reason: reason ?? null,
   });
+  // A lead the AI couldn't answer (no texting consent, or the send failed)
+  // is a paid lead waiting on a person: tell the team, like a handover.
+  if (!ingested.duplicate && (firstResponse === "held_for_review" || firstResponse === "failed")) {
+    await alertStaff({
+      tenantId, conversationId: ingested.conversationId, urgency: "soon",
+      // Short: it is read on a phone. The full detail is on the dashboard.
+      reason: `new ${sourceLabel(input.source)} lead needs a call (${!consent.sms ? "no texting consent on the form" : "the reply couldn't be sent"})`,
+    }).catch(() => undefined);
+  }
   if (!ingested.duplicate) {
     await publish(tenantId, "lead.created", {
       lead_id: leadId, source: input.source, service: input.service ?? null, message: input.message ?? null,

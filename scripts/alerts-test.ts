@@ -162,6 +162,14 @@ async function main() {
     const test = await intakeLead(tenant.id, { source: "website", externalId: "owner-test", name: "Dana", phone: "617-555-0101", message: "testing the form" });
     check("the owner testing the web form with her own mobile is still a lead", Boolean(test.leadId) && Boolean(test.conversationId));
 
+    console.log("\nA lead the AI couldn't text reaches a person");
+    await db.update(locations).set({ hours: ALL_DAY }).where(eq(locations.id, location.id));
+    const held = await intakeLead(tenant.id, { source: "angi", externalId: "angi-held-1", name: "Ivy", phone: "617-555-0198",
+      consent: { sms: true, language: "I agree to be contacted." } });
+    const heldAlerts = await alertsFor(held.conversationId!);
+    check("an Angi lead held for lack of consent alerts the team", held.firstResponse === "held_for_review" && heldAlerts.length === 1 &&
+      String((heldAlerts[0].payload as { reason?: string }).reason).includes("needs a call"), String((heldAlerts[0]?.payload as { reason?: string })?.reason));
+
     console.log("\nReschedule requests reach a person");
     const [c] = await db.insert(contacts).values({ tenantId: tenant.id, displayName: "Leah", primaryPhone: "+16175550195" }).returning();
     const [convo] = await db.insert(conversations).values({ tenantId: tenant.id, contactId: c.id, channel: "sms" }).returning();
