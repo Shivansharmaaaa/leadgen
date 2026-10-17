@@ -82,10 +82,11 @@ type Slot = { starts_at: string; label: string };
 
 const tally = new Map<string, number>();
 const count = (k: string) => tally.set(k, (tally.get(k) ?? 0) + 1);
-const examples = new Map<string, string>();
+const examples = new Map<string, string[]>();
 const problem = (k: string, detail: string) => {
   count(`drop:${k}`);
-  if (!examples.has(k)) examples.set(k, detail);
+  const seen = examples.get(k) ?? [];
+  if (seen.length < 6) examples.set(k, [...seen, detail]);
 };
 
 function slotsFrom(context: string | undefined): Slot[] | null {
@@ -202,7 +203,8 @@ async function replay(d: Dialogue, clone: Clone, out: Row[]) {
       const s: Slot = turn.pick === "a" ? offered[0] : offered[1];
       Object.assign(vars, { pick: spoken(s, tz), pick_iso: s.starts_at, pick_short: short(s, tz) });
     }
-    const said = fill(turn.caller, vars);
+    const filled = fill(turn.caller, vars);
+    const said = filled.charAt(0).toUpperCase() + filled.slice(1);
     if (unfilled(said)) { problem("caller_unfilled", `${d.id}#${ti}: ${said}`); return; }
 
     ScriptedProvider.reset();
@@ -264,7 +266,9 @@ async function replay(d: Dialogue, clone: Clone, out: Row[]) {
     const done = events.find((e) => e.type === "done");
     if (made === 0) {
       count(`ruled:${done?.provider ?? "none"}`);
-      if (!turn.expect_rule) { problem(`unexpected_rule:${done?.provider}`, `${d.id}#${ti}: "${said}"`); return; }
+      // Answered by rule where a reply was planned: the history now holds the
+      // rule's words. Later turns that needed this one's slots stop on their own.
+      if (!turn.expect_rule) problem(`unplanned_rule:${done?.provider}`, `${d.id}#${ti}: "${said}"`);
       continue;
     }
     if (turn.expect_rule) { problem("expected_rule_but_model", `${d.id}#${ti}: "${said}"`); return; }
@@ -325,7 +329,7 @@ async function main() {
   writeFileSync(output.replace(/\.jsonl$/, ".report.json"),
     JSON.stringify({ dialogues: dialogues.length, rows: rows.length, tally: report, examples: Object.fromEntries(examples) }, null, 2));
   for (const [k, v] of Object.entries(report)) console.log(`  ${k.padEnd(48)} ${v}`);
-  for (const [k, v] of examples) console.log(`  e.g. ${k}: ${v.slice(0, 200)}`);
+  for (const [k, v] of examples) console.log(`  e.g. ${k}: ${v[0].slice(0, 200)}`);
   console.log(`✓ ${rows.length} rows from ${dialogues.length} dialogues → ${output}`);
   process.exit(0);
 }
