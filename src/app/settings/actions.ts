@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireOwner } from "@/server/auth/owner";
 import {
-  addWebhook, disableIntake, getTenant, removeStaff, removeWebhook, rotateIntakeKey, setSourceSpend, setWebchatOrigins,
+  addWebhook, disableIntake, getTenant, removeStaff, removeWebhook, rotateCalendarToken, rotateIntakeKey, setSourceSpend, setWebchatOrigins,
   updateBusiness, upsertStaff,
 } from "@/server/settings";
 
@@ -88,4 +88,10 @@ export async function saveSpend(_: ActionState, form: FormData): Promise<ActionS
   for (const [k, v] of form.entries()) if (k.startsWith("spend:")) raw[k.slice(6)] = String(v);
   const r = await setSourceSpend(t.id, raw);
   return r.ok ? done("Saved. Cost per booked job is on the dashboard.") : { error: r.error };
+}
+
+export async function newCalendarLink(_: ActionState): Promise<ActionState> {
+  const t = await tenantOrThrow();
+  await rotateCalendarToken(t.id);
+  return done("New calendar link created. Any old subscription stops updating.");
 }

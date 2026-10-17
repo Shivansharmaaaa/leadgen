@@ -155,3 +155,10 @@ export async function setSourceSpend(tenantId: string, raw: Record<string, strin
   await patchSettings(tenantId, { sourceSpend: Object.keys(spend).length ? spend : undefined });
   return { ok: true, value: spend };
 }
+
+/** A new calendar feed URL. The old one stops working at once. */
+export async function rotateCalendarToken(tenantId: string): Promise<Result<string>> {
+  const token = randomBytes(32).toString("base64url");
+  await patchSettings(tenantId, { calendarToken: token });
+  return { ok: true, value: token };
+}

@@ -5,7 +5,7 @@ import { getTenant } from "@/server/settings";
 import { WEBHOOK_EVENTS } from "@/server/features/webhooks";
 import { recommendedConsentWording } from "@/server/features/lead-intake";
 import { deleteStaff, deleteWebhook } from "./actions";
-import { BusinessForm, IntakePanel, OriginsForm, SpendForm, StaffForm, WebhookForm } from "./forms";
+import { BusinessForm, CalendarPanel, IntakePanel, OriginsForm, SpendForm, StaffForm, WebhookForm } from "./forms";
 
 export const dynamic = "force-dynamic";
 
@@ -86,6 +86,10 @@ content-type: application/json
           {`<script src="${app}/widget.js" data-tenant="${tenant.slug}" data-name="${attr(s.businessName ?? tenant.name)}" async></script>`}
         </code>
         <OriginsForm origins={s.webchatOrigins ?? []} />
+      </Section>
+
+      <Section title="Jobs in your calendar" hint="Subscribe to this link in Google Calendar (Other calendars → From URL), Apple Calendar or Outlook, and every booking appears with the customer's name and number. It carries customer details: share it only with your team.">
+        <CalendarPanel url={s.calendarToken ? `${app}/api/calendar/${s.calendarToken}.ics` : null} />
       </Section>
 
       <Section title="What you pay for leads" hint="Monthly spend per source. The dashboard turns it into cost per lead and cost per booked job, so you can see which sources are worth it.">

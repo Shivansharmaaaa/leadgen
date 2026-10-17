@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import {
-  saveBusiness, saveStaff, newIntakeKey, turnOffIntake, saveOrigins, saveWebhook, saveSpend, type ActionState,
+  saveBusiness, saveStaff, newIntakeKey, turnOffIntake, saveOrigins, saveWebhook, saveSpend, newCalendarLink, type ActionState,
 } from "./actions";
 
 const input: React.CSSProperties = {
@@ -138,5 +138,22 @@ export function SpendForm({ sources, spend }: { sources: { key: string; label: s
       <div><button style={button} disabled={pending}>Save</button></div>
       <Status state={state} />
     </form>
+  );
+}
+
+export function CalendarPanel({ url }: { url: string | null }) {
+  const [state, action, pending] = useActionState(newCalendarLink, undefined);
+  return (
+    <div>
+      {url ? (
+        <code style={{ display: "block", padding: "8px 10px", background: "var(--panel-2)", borderRadius: 6, fontSize: 13, wordBreak: "break-all", userSelect: "all" }}>{url}</code>
+      ) : (
+        <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>No calendar link yet.</p>
+      )}
+      <form action={action} style={{ marginTop: 10 }}>
+        <button style={url ? quiet : button} disabled={pending}>{url ? "Replace the link" : "Create a calendar link"}</button>
+      </form>
+      <Status state={state} />
+    </div>
   );
 }

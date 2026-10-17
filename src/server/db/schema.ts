@@ -76,6 +76,8 @@ export type TenantSettings = {
   webhooks?: { url: string; secret: string; events?: string[] }[];
   /** Monthly spend per lead source ("angi": 600), for cost per booked job. */
   sourceSpend?: Record<string, number>;
+  /** Secret in the private bookings calendar feed URL; rotating it cuts off old subscriptions. */
+  calendarToken?: string;
 };
 
 export const locations = pgTable("locations", {
