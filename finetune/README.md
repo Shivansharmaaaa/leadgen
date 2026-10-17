@@ -126,6 +126,50 @@ Every number here came from a run in this repo, on a 4-core x86 cloud CPU
 with no GPU (Intel AMX in use). Latencies on Apple Silicon are far lower;
 the ratios are what carry over.
 
+### The overnight conversion run (17 Oct 2026, M3 Pro)
+
+`3b-conv-lp16`: Llama 3.2 3B, LoRA+ (B at 16x), lr 2e-4 with warmup and
+cosine decay, rank 16, all seven projections, 97 steps of 8 packed dialogues
+(0.65 epoch, 286 minutes at 128 tok/s). The set adds the conversion dialogues
+(objections answered with facts, and "no" accepted without a second pitch)
+to SGD and the HVAC calls: 1,205 sequences, 5,466 targets.
+
+Held-out loss (24 rows): 1.685 → 0.627 (step 25) → **0.588 (step 50)** →
+0.619 (step 75) → 0.599 (step 97), while train loss fell to ~0.1–0.3. It
+starts to overfit around half an epoch; the trainer now keeps `best/`.
+
+Held-out next action (`eval_actions.py`, 74 decisions, 3 per kind, through
+`/api/chat` exactly as the app calls it):
+
+| | stock | cache-friendly | cache-friendly + LoRA |
+|---|---|---|---|
+| Right next step | 49% | 65% | **97%** |
+| …with the right arguments | 35% | 65% | **96%** |
+| Premature bookings | 9 | 3 | **0** |
+
+Stock calls a tool in the middle of almost every objection and books after
+2 of 3 price and trust objections; the untuned layout under-calls (never
+books after a yes, never qualifies, never escalates). The LoRA gets every
+conversion and HVAC kind right; its misses are generic SGD replies that it
+turned into tool calls. **These rows come from the same generators as the
+training set** (held out by dialogue), so this measures how well it learnt
+the behaviour, not how a stranger on the phone will find it.
+
+That is what the live-call eval measures (`npm run eval -- --voice`, 27
+hand-written scenarios, leak-checked against the set): **stock 55/60 checks,
+LoRA 55/60, a tie**, with the LoRA's turns slower (p50 4.5 s vs 2.7 s).
+Both fail two scenarios for routing reasons, not weights (on voice
+`qualify_lead` is not offered, and the scheduling gate can withhold
+`check_availability`). The LoRA's own misses: it said "definitely", which
+Gate 2 holds — 44 training targets taught it that, now impossible (the
+build refuses any target Gate 2 would hold) — and it answered a no-heat
+emergency kindly but without urgency words.
+
+What the next run should change: about half an epoch, `best/` by held-out
+loss, the rebuilt set (no held phrases), emergency replies that say it's
+being prioritised, and a live-call score above stock before it replaces
+`OLLAMA_VOICE_MODEL`.
+
 ### Before training: the fixes that needed no weights
 
 `npm run eval`, llama3.2:3b, stock template, 20 scenarios:
