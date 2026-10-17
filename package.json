@@ -52,7 +52,7 @@
     "twilio:verified": "tsx --env-file=.env scripts/check-verified.ts",
     "voice": "bash scripts/voice-local.sh",
     "voice:check": "tsx --env-file=.env scripts/voice-preflight.ts",
-    "finetune:data": "python3 finetune/fetch_sgd.py && tsx --env-file=.env scripts/finetune-export.ts && python3 finetune/build_dataset.py",
+    "finetune:data": "tsx --env-file=.env scripts/finetune-export.ts && python3 finetune/dialogues.py --real-callers --per-tenant 200 && tsx --env-file=.env scripts/finetune-render.ts && python3 finetune/build_dataset.py --max-per-kind 40",
     "tts": "bash tts/run.sh",
     "stt": "bash stt/run.sh",
     "stt:fetch": "bash scripts/fetch-parakeet.sh"

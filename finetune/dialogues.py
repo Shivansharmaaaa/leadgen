@@ -580,7 +580,7 @@ OFFER_LINES = ["I have {a} or {b}. Which works better?", "I can do {a} or {b}. W
 ASK_NAME = ["Great. Can I get your name for the booking?", "Perfect. What name should I put the booking under?",
             "Sure. What's your name, for the booking?"]
 BOOK_OFFER = ["Would you like me to book you in?", "Shall I book a time for you?", "Want me to book you in?"]
-DECLINE_FINAL = ["No, I'll leave it for now, thanks.", "I'm going to hold off, thanks anyway.", "Not right now, thank you."]
+DECLINE_FINAL = ["No, I think I'll pass for the moment.", "I'm going to hold off, thanks anyway.", "Not right now, thank you."]
 CLOSE_GRACEFUL = ["No problem at all. If anything changes, just give us a call.",
                   "That's fine. You're welcome to call back any time.",
                   "Of course. If you change your mind, we're here."]

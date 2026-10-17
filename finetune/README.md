@@ -5,7 +5,7 @@ same harness that grades the product.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r finetune/requirements.txt
-npm run finetune:data                       # fetch SGD, export prompt+tools, build the set
+npm run finetune:data                       # export kit, script calls, replay them through the voice route, build
 .venv/bin/python finetune/fetch_base.py 3b  # only where huggingface.co is blocked
 .venv/bin/python finetune/train_lora.py --base data/finetune/base/llama3.2-3b --name r16-adamw
 .venv/bin/python finetune/export_ollama.py --run r16-adamw --llama-cpp ~/src/llama.cpp  # merge -> GGUF -> Q4_K_M -> Ollama
@@ -81,20 +81,39 @@ is Q4_K_M like stock (verified). Then point the voice line at the winner
 
 ## What it learns from
 
-| Source | What it teaches | Size |
-|---|---|---|
-| [Schema-Guided Dialogue](https://github.com/google-research-datasets/dstc8-schema-guided-dialogue) (Google, CC BY-SA 4.0): salon, dentist, doctor and therapist booking | Check availability before reading a time back; book only after a yes; re-confirm after a no; recover when the slot was taken | 762 dialogues |
-| Synthetic calls to the seeded HVAC tenant | Acknowledge the caller's own details; a name and number is not a yes to a time; escalate, don't quote unknown prices, disclose being an AI | 400 dialogues |
+Since 17 Oct 2026 every training prompt is one production rendered. The
+overnight set below was assembled in Python and had drifted: 853 targets
+called tools voice no longer offers, every tool was always on offer, tool
+results carried across turns. The pipeline now is:
 
-Every example is rendered with the production system prompt
-(`scripts/finetune-export.ts` calls `buildSystemPrompt`) and the production
-voice tools, in the exact layout of `models/leadgen-llama3.2.Modelfile`. The
-renderer was checked against Ollama byte for byte. The build refuses to run if
-any eval-set utterance appears in the training text.
+1. `scripts/finetune-export.ts`: prompt kit (tools, each tenant's facts, Gate 2's hold patterns).
+2. `finetune/dialogues.py --real-callers`: scripted calls for the three seeded
+   tenants (HVAC, immigration, admissions): booking, urgent, objections,
+   questions, services not offered, callbacks, outbound. Prices and policies
+   come from the tenant's facts; times are filled from the slots the
+   calendar note actually offered. About 35% of name turns are real caller
+   lines from Taskmaster (below), refilled with names from each market.
+3. `scripts/finetune-render.ts`: replays each call through `POST
+   /api/voice/stream` with a scripted provider and records what the model is
+   handed on every turn: system, per-turn context, history, the tools offered
+   on that turn. A planned reply production could not have produced (an
+   unoffered tool, a held reply, a turn answered by rule) gives no row, and
+   `rendered.report.json` says why.
+4. `finetune/build_dataset.py --max-per-kind 40`: Llama text exactly as
+   Ollama renders it (`llama_format.py`), three hard checks (no eval
+   utterance verbatim or paraphrased, no Gate 2 phrase, no tool the turn did
+   not offer), split by dialogue, at most 40 rows of one kind per tenant so
+   the booking steps don't swamp objections and facts, packed.
 
-Splits are by dialogue: SGD's own train split trains; its dev and test splits
-are held out. Loss is taken only on the assistant's steps. Dialogues are packed
-so each one is read once with all its targets, rather than once per target.
+The set built for the next run (600 calls): 2,622 rendered rows, 596 calls
+complete (4 "what times do you have?" turns routed without the calendar note,
+6 questions the fast path answers by rule); 1,356 train rows (1,267 sequences, 3.05M tokens, longest 3,451) and
+324 held-out rows from 71 calls held out by a hash of their id.
+
+Loss is taken only on the assistant's steps. Schema-Guided Dialogue (Google,
+CC BY-SA 4.0) and the Python HVAC/conversion generators trained the overnight
+run; they were dropped because their prompts were not production's (git
+history before this change has them).
 
 ### Considered and left out
 

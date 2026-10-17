@@ -42,6 +42,10 @@ NO_BOOK_KINDS = {
     "readback_no_booking", "save_details_not_book", "ask_which_time", "offer_two_times",
     "accept_no_gracefully", "objection_price", "objection_delay", "objection_competition",
     "objection_browsing", "objection_trust",
+    # finetune/dialogues.py (rendered through the voice route)
+    "ask_name", "accept_no", "objection_guarantee", "objection_discount", "objection_diy",
+    "objection_school", "objection_write_it", "not_offered", "offer_callback", "ask_callback",
+    "callback_declined", "goodbye",
 }
 
 

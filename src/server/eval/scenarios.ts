@@ -507,7 +507,7 @@ export const SCENARIOS: Scenario[] = [
     stake: "Callers asked for a name usually just say it; if it isn't asked for and captured, the session can never be booked.",
     turns: [
       "I'd like to book the free session for my son, he's applying for medicine. When are you free?",
-      "The first one, please.",
+      "I'd like the first one, thanks.",
       "Grace Adeyemi.",
     ],
     checks: [
