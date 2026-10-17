@@ -152,6 +152,10 @@ async function main() {
     check("it claims his latest alert's conversation, taking it off the AI", claimed?.aiPaused === true && claimed.id === noHeat.conversationId,
       `${onIt.conversationId} vs no-heat ${noHeat.conversationId}`);
     check("and tells him who it is", Boolean(onIt.outcome?.reply?.startsWith("Got it")), onIt.outcome?.reply ?? "");
+    const staffTexts = async () => (await db.query.events.findMany({ where: and(eq(events.tenantId, tenant.id), eq(events.type, "staff_text")) })).length;
+    const beforeDup = await staffTexts();
+    const dup = await inbound(20, "On it", "+16175550102");  // the same Twilio message redelivered
+    check("a redelivered staff text is handled once", (await staffTexts()) === beforeDup && dup.outcome?.reply === "");
     const chat = await inbound(21, "what's for lunch", "+16175550101");  // Dana
     check("anything else from staff gets a pointer, not a chat", chat.outcome?.provider === "rule" && ScriptedProvider.requests.length === runsBefore, chat.outcome?.reply ?? "");
     const { intakeLead } = await import("@/server/features/lead-intake");

@@ -71,6 +71,7 @@ export async function handleInbound(msg: InboundMessage): Promise<IngestResult> 
     if (member) {
       const r = await handleStaffText({
         tenantId: msg.tenantId, staffId: member.id, staffPhone: member.phone!, staffName: member.name, body: msg.body,
+        externalId: msg.externalId,
       });
       return {
         conversationId: r.claimed ?? "", contactId: "", messageId: "", duplicate: false, sent: false,

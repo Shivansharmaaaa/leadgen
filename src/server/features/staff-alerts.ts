@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { addDays } from "date-fns";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import {
@@ -206,8 +206,17 @@ const CLAIM = /^\s*(?:1|ok(?:ay)?|on it|got it|mine|i'?ll take it|taking it|clai
  * alert takes that conversation off the AI and records who has it.
  */
 export async function handleStaffText(args: {
-  tenantId: string; staffId: string; staffPhone: string; staffName: string; body: string;
+  tenantId: string; staffId: string; staffPhone: string; staffName: string; body: string; externalId?: string | null;
 }): Promise<{ claimed: string | null; reply: string }> {
+  // Staff texts aren't stored as messages, so the provider's redelivery is
+  // caught here instead: answering twice would text the tech twice.
+  if (args.externalId) {
+    const seen = await db.query.events.findFirst({
+      where: and(eq(events.tenantId, args.tenantId), eq(events.type, "staff_text"),
+        sql`${events.payload}->>'externalId' = ${args.externalId}`),
+    });
+    if (seen) return { claimed: (seen.payload.claimed as string | null) ?? null, reply: "" };
+  }
   const recent = await db.query.events.findMany({
     where: and(eq(events.tenantId, args.tenantId), eq(events.type, "staff_alert"),
       gte(events.createdAt, new Date(Date.now() - 12 * 3600_000))),
@@ -236,7 +245,10 @@ export async function handleStaffText(args: {
       ? "Reply 1 to take the last alert" + (app ? `, or open the inbox: ${app}/inbox` : ".")
       : "This is the business line. Nothing is waiting for you" + (app ? `; the inbox is at ${app}/inbox` : ".");
   }
-  await db.insert(events).values({ tenantId: args.tenantId, type: "staff_text", payload: { staffId: args.staffId, claimed } });
+  await db.insert(events).values({
+    tenantId: args.tenantId, type: "staff_text",
+    payload: { staffId: args.staffId, claimed, externalId: args.externalId ?? null },
+  });
   await textStaff(args.tenantId, args.staffPhone, reply);
   return { claimed, reply };
 }
