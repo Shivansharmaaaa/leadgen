@@ -45,8 +45,14 @@ export default function VoicePage() {
    * rather than something to take on faith.
    */
   const [signals, setSignals] = useState<{ at: number; kind: string; detail: string }[]>([]);
+  // Every signal is also sent to the server (data/voice-logs/<session>.jsonl):
+  // "it ignores me sometimes" happens here, before a turn reaches the server,
+  // and the panel only ever shows the last six.
+  const logQueue = useRef<{ at: number; kind: string; detail: string }[]>([]);
   const note = useCallback((kind: string, detail: string) => {
-    setSignals((s) => [...s.slice(-5), { at: Date.now(), kind, detail }]);
+    const ev = { at: Date.now(), kind, detail };
+    logQueue.current.push(ev);
+    setSignals((s) => [...s.slice(-5), ev]);
   }, []);
 
   const recognitionRef = useRef<any>(null);
@@ -83,7 +89,7 @@ export default function VoicePage() {
    * still speaking, and the rest of that reply went back into hiding.
    */
   /** `declined`: the server would not act on this guess (an opt-out). */
-  type SpecState = { confirmed: boolean; held: string[]; declined: boolean };
+  type SpecState = { confirmed: boolean; held: string[]; declined: boolean; inboundId?: string };
   const currentSpec = useRef<SpecState | null>(null);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,9 +136,33 @@ export default function VoicePage() {
 
   useEffect(() => {
     sessionIdRef.current = `browser_${Math.random().toString(36).slice(2, 10)}`;
+
+    const flushLog = () => {
+      if (logQueue.current.length === 0) return;
+      const events = logQueue.current.splice(0);
+      void fetch("/api/voice/log", {
+        method: "POST", headers: { "content-type": "application/json" }, keepalive: true,
+        body: JSON.stringify({ sessionId: sessionIdRef.current, events }),
+      }).catch(() => {});
+    };
+    const flushTimer = setInterval(flushLog, 2000);
+    window.addEventListener("pagehide", flushLog);
+    const stopLogging = () => {
+      clearInterval(flushTimer);
+      window.removeEventListener("pagehide", flushLog);
+      flushLog();
+    };
+
+    // Wake the voice, the recogniser and the LLM before the first word: idle,
+    // they get paged out, and the first turn took 2.5 s + 7 s to recover.
+    void fetch("/api/voice/warm", { method: "POST" })
+      .then((r) => r.json())
+      .then((j: { results: { name: string; ok: boolean; ms: number }[] }) =>
+        note("warm-up", j.results.map((r) => `${r.name} ${r.ok ? `${r.ms}ms` : "failed"}`).join(" · ")))
+      .catch(() => note("warm-up", "failed"));
     const SR =
       (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!SR) { setSupported(false); return; }
+    if (!SR) { setSupported(false); return stopLogging; }
 
     const rec = new SR();
     rec.continuous = true;
@@ -142,6 +172,7 @@ export default function VoicePage() {
     // a better-scoring one, rather than being taken as what was said.
     rec.maxAlternatives = 3;
     recognitionRef.current = rec;
+    return stopLogging;
   }, []);
 
   useEffect(() => {
@@ -252,7 +283,10 @@ export default function VoicePage() {
    */
   const enqueueSpeech = useCallback((text: string) => {
     spokenLog.current = [...spokenLog.current.slice(-12), { text, at: Date.now() }];
+    const queuedAt = performance.now();
     const pending = fetchSpeech(text);
+    let synthMs = 0;
+    void pending.then(() => { synthMs = Math.round(performance.now() - queuedAt); });
     chain.current = chain.current.then(async () => {
       const bytes = await pending;
       if (!bytes) { fallbackSpeak(text); return; }
@@ -266,6 +300,9 @@ export default function VoicePage() {
         // Start where the last clip ends, or now if the queue has drained.
         const startAt = Math.max(ac.currentTime + 0.02, nextStartAt.current);
         src.start(startAt);
+        // How long after the text arrived this sentence is actually heard.
+        const audibleIn = Math.round(performance.now() - queuedAt + (startAt - ac.currentTime) * 1000);
+        note("voice", `"${text.slice(0, 22)}" heard after ${audibleIn}ms (synthesis ${synthMs}ms)`);
         nextStartAt.current = startAt + buffer.duration + PAUSE_AFTER(text);
 
         scheduled.current.push(src);
@@ -276,7 +313,7 @@ export default function VoicePage() {
         fallbackSpeak(text);
       }
     });
-  }, [ctx, fetchSpeech, fallbackSpeak]);
+  }, [ctx, fetchSpeech, fallbackSpeak, note]);
 
   /** True while agent audio is playing or scheduled to play. */
   const agentSpeaking = useCallback(() => {
@@ -299,7 +336,7 @@ export default function VoicePage() {
     text: string,
     // `rerun`: the caller's bubble is already on screen (a released guess the
     // server then declined), so only the reply is still owed.
-    opts: { speculative?: boolean; alternatives?: string[]; rerun?: boolean } = {},
+    opts: { speculative?: boolean; alternatives?: string[]; rerun?: boolean; discard?: string } = {},
   ) => {
     const controller = new AbortController();
     if (opts.speculative) {
@@ -312,6 +349,10 @@ export default function VoicePage() {
       inflightReal.current = controller;
     }
 
+    // A guess that was answered but never confirmed must not stay in the
+    // history: the model then sees itself replying twice to one turn.
+    const prior = currentSpec.current;
+    const discard = opts.discard ?? (opts.speculative && prior && !prior.confirmed ? prior.inboundId : undefined);
     const spec: SpecState | null = opts.speculative ? { confirmed: false, held: [], declined: false } : null;
     if (spec) currentSpec.current = spec;
 
@@ -358,6 +399,7 @@ export default function VoicePage() {
           sessionId: sessionIdRef.current, text,
           speculative: opts.speculative,
           alternatives: opts.alternatives?.length ? opts.alternatives : undefined,
+          discard,
         }),
         signal: controller.signal,
       });
@@ -385,7 +427,9 @@ export default function VoicePage() {
           let ev: Record<string, unknown>;
           try { ev = JSON.parse(raw); } catch { continue; }
 
-          if (ev.type === "sentence") {
+          if (ev.type === "inbound") {
+            if (spec) spec.inboundId = String(ev.id);
+          } else if (ev.type === "sentence") {
             cancelFiller();
             const sentence = String(ev.text);
             if (spec && !spec.confirmed) {
@@ -533,7 +577,7 @@ export default function VoicePage() {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
         body: pcm,
-        signal: AbortSignal.timeout(2500),
+        signal: AbortSignal.timeout(1200),
       });
       if (!res.ok) return { text: null, why: `service returned ${res.status}` };
       const d = await res.json();
@@ -650,11 +694,12 @@ export default function VoicePage() {
         return;
       }
       // Guess was wrong, or there was none: drop the guess and run the real turn.
+      const abandoned = currentSpec.current?.inboundId;
       inflightSpec.current?.abort();
       inflightSpec.current = null;
       currentSpec.current = null;
       speculatedFor.current = null;
-      void send(text, { alternatives });
+      void send(text, { alternatives, discard: abandoned });
     };
 
     rec.onresult = (e: any) => {
@@ -697,7 +742,8 @@ export default function VoicePage() {
           note("barge-in", `"${heard.slice(0, 28)}" — stopped the agent`);
           stopSpeaking();
         } else {
-          if (action === "backchannel") note("backchannel", `"${heard.slice(0, 20)}" — kept going`);
+          note(action === "backchannel" ? "backchannel" : "ignored",
+            `"${heard.slice(0, 24)}" while the agent was talking — kept going`);
           return; // not a turn of its own
         }
       }

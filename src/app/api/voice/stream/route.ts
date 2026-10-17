@@ -6,7 +6,7 @@ import { extractIdentifiers, extractName } from "@/server/core/extract";
 import { linkIdentifierToContact } from "@/server/core/identity";
 import { extractMemories } from "@/server/memory/extract";
 import { runVoiceTurn } from "@/server/agent/voice-turn";
-import { and } from "drizzle-orm";
+import { and, gte } from "drizzle-orm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     sessionId?: string; text?: string; tenant?: string; speculative?: boolean;
-    alternatives?: string[];
+    alternatives?: string[]; discard?: string;
   };
   const speculative = Boolean(body.speculative);
   // Other hearings of the same utterance when the two recognisers disagreed.
@@ -67,6 +67,23 @@ export async function POST(req: Request) {
       tenantId: tenant.id, contactId: contact.id,
       channel: "voice", externalThreadId: sessionId,
     }).returning();
+  }
+
+  // A guess the client abandoned after it had already been answered: the
+  // guess and its reply go, or the model sees itself answering one turn
+  // twice (a session at 10:57 stored two different replies to "hello can
+  // you talk to me"). Only a recent message in this same conversation.
+  const discard = typeof body.discard === "string" && /^[0-9a-f-]{36}$/i.test(body.discard) ? body.discard : null;
+  if (discard) {
+    const old = await db.query.messages.findFirst({
+      where: and(eq(messagesTable.id, discard), eq(messagesTable.conversationId, conversation.id)),
+    });
+    if (old && old.direction === "inbound" && Date.now() - old.createdAt.getTime() < 120_000) {
+      await db.delete(messagesTable).where(and(
+        eq(messagesTable.conversationId, conversation.id),
+        gte(messagesTable.createdAt, old.createdAt),
+      ));
+    }
   }
 
   const [inbound] = await db.insert(messagesTable).values({
@@ -122,6 +139,9 @@ export async function POST(req: Request) {
           /* client went away mid-turn */
         }
       };
+      // Lets the client name this turn later, if it turns out to be a guess
+      // it has to discard.
+      send({ type: "inbound", id: inbound.id });
       try {
         for await (const ev of runVoiceTurn({
           conversationId: conversation!.id,
