@@ -44,8 +44,8 @@ async function main() {
   const [contact] = await db.insert(contacts).values({
     tenantId: tenant.id, displayName: "Grace Murphy", primaryPhone: "+16175550123",
   }).returning();
-  const book = async (startsAt: Date) => (await db.insert(appointments).values({
-    tenantId: tenant.id, contactId: contact.id, locationId: location.id, service: "AC repair",
+  const book = async (startsAt: Date, contactId = contact.id) => (await db.insert(appointments).values({
+    tenantId: tenant.id, contactId, locationId: location.id, service: "AC repair",
     startsAt, endsAt: new Date(startsAt.getTime() + 3600_000),
   }).returning())[0];
   const jobsFor = (id: string) => db.query.jobs.findMany({
@@ -160,11 +160,18 @@ async function main() {
     const slot = local(9, "11:00");
     const cancelledThere = await book(slot);
     await db.update(appointments).set({ status: "cancelled" }).where(eq(appointments.id, cancelledThere.id));
-    await book(slot); // confirmed, same slot
+    // Someone else's confirmed booking in the same slot. (The customer's own
+    // booking there is theirs already, and booking it again confirms it.)
+    const [someoneElse] = await db.insert(contacts).values({ tenantId: tenant.id, displayName: "Someone Else" }).returning();
+    await book(slot, someoneElse.id); // confirmed, same slot
     // Times as check_availability hands them out: local, with the offset.
     const offered = (d: Date) => formatInTimeZone(d, TZ, "yyyy-MM-dd'T'HH:mm:ssXXX");
     const clash = await executeTool(ctx, "book_appointment", { service: "Tune-up", starts_at: offered(slot) });
     check("a cancelled booking no longer hides a confirmed one", clash.ok === false, String(clash.error ?? "booked!"));
+    const mine = await book(local(9, "14:00"));
+    const again = await executeTool(ctx, "book_appointment", { service: "Tune-up", starts_at: offered(mine.startsAt) });
+    check("booking your own slot again confirms it, not 'taken'",
+      again.ok === true && (again as { already_booked?: boolean }).already_booked === true, JSON.stringify(again).slice(0, 80));
     const backToBack = await executeTool(ctx, "book_appointment", {
       service: "Tune-up", starts_at: offered(new Date(slot.getTime() + 3600_000)),
     });
