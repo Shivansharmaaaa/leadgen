@@ -30,7 +30,7 @@ import { db, contacts, jobs, tenants } from "@/server/db";
  */
 
 export const WEBHOOK_EVENTS = [
-  "lead.created", "lead.qualified", "appointment.booked", "appointment.confirmed",
+  "lead.created", "lead.qualified", "lead.won", "lead.lost", "appointment.booked", "appointment.confirmed",
   "appointment.reschedule_requested", "appointment.completed", "appointment.no_show", "appointment.cancelled",
   "conversation.escalated", "contact.opted_out", "contact.erased",
 ] as const;

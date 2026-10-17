@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getDashboard } from "@/server/queries/dashboard";
 import { currentTenantSlug } from "@/server/settings";
 import { CampaignButton } from "./CampaignButton";
-import { closeJob } from "./actions";
+import { closeJob, markLead } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -268,11 +268,18 @@ export default async function DashboardPage() {
       {data.recentLeads.length > 0 && (
         <Section title="Recent leads">
           <Table
-            head={["Score", "Service", "Urgency", "Status", "From"]}
+            head={["Score", "Service", "Urgency", "Status", "From", ""]}
             rows={data.recentLeads.map((l) => [
               <ScorePill key="s" score={l.score} />,
               l.service ?? "—", l.urgency ?? "—", l.status,
               SOURCE_LABEL[l.source ?? l.sourceChannel] ?? l.source ?? l.sourceChannel,
+              l.status === "won" || l.status === "lost" ? "" : (
+                <form key="o" action={markLead} style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                  <input type="hidden" name="leadId" value={l.id} />
+                  <button name="outcome" value="won" style={jobButton("var(--accent)")}>Won</button>
+                  <button name="outcome" value="lost" style={jobButton("var(--muted)")}>Lost</button>
+                </form>
+              ),
             ])}
           />
         </Section>

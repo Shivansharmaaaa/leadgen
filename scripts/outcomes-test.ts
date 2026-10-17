@@ -69,6 +69,16 @@ async function main() {
     check("…but it can be cancelled", (await recordAppointmentOutcome(tenant.id, tomorrow.id, "cancelled", "test")).ok);
     const foreign = await recordAppointmentOutcome(other.id, tooOld.id, "completed", "test");
     check("another tenant can't close it", !foreign.ok && foreign.error === "No such appointment.");
+    console.log("\nWon and lost by hand");
+    const { setLeadOutcome } = await import("@/server/features/appointment-outcomes");
+    const [open] = await db.insert(leads).values({ tenantId: tenant.id, contactId: c.id, sourceChannel: "sms", status: "qualified" }).returning();
+    check("a lead can be marked lost", (await setLeadOutcome(tenant.id, open.id, "lost", "test")).ok &&
+      (await db.query.leads.findFirst({ where: eq(leads.id, open.id) }))?.status === "lost");
+    const again = await setLeadOutcome(tenant.id, open.id, "lost", "test");
+    check("…not twice", !again.ok);
+    check("…nor from another tenant", !(await setLeadOutcome(other.id, open.id, "won", "test")).ok);
+    const lostHook = await db.query.jobs.findMany({ where: and(eq(jobs.tenantId, tenant.id), eq(jobs.type, "webhook_delivery")) });
+    check("the CRM hears lead.lost", lostHook.some((j) => (j.payload.event as { type: string }).type === "lead.lost"));
   } finally {
     await db.delete(tenants).where(eq(tenants.id, tenant.id));
     await db.delete(tenants).where(eq(tenants.id, other.id));
