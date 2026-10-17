@@ -90,7 +90,7 @@ export default function VoicePage() {
    * still speaking, and the rest of that reply went back into hiding.
    */
   /** `declined`: the server would not act on this guess (an opt-out). */
-  type SpecState = { confirmed: boolean; held: { text: string; plan?: SpeechPlan }[]; declined: boolean; inboundId?: string };
+  type SpecState = { confirmed: boolean; held: { text: string; plan?: SpeechPlan; opener?: boolean }[]; declined: boolean; inboundId?: string };
   const currentSpec = useRef<SpecState | null>(null);
   const speculationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fillerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -295,14 +295,14 @@ export default function VoicePage() {
    * clips are appended to the timeline in the order they were spoken, however
    * the network returns them.
    */
-  const enqueueSpeech = useCallback((text: string, plan?: SpeechPlan, first = false) => {
+  const enqueueSpeech = useCallback((text: string, plan?: SpeechPlan, opener = false) => {
     spokenLog.current = [...spokenLog.current.slice(-12), { text, at: Date.now() }];
     const queuedAt = performance.now();
-    // The planned pace (voice/delivery.ts). Not on a reply's first sentence:
-    // the instant openers are pre-rendered at the default speed, and another
-    // speed would miss that cache and cost the first word. Not for a rate
-    // within 3% either, for the same reason.
-    const speed = plan && !first && Math.abs(plan.rate - 1) >= 0.03
+    // The planned pace (voice/delivery.ts). Not on a fast-path opener: those
+    // are pre-rendered at the default speed, and another speed would miss
+    // that cache and cost the first word. Every other sentence follows its
+    // plan, a safety warning first of all. A rate within 3% isn't worth a miss.
+    const speed = plan && !opener && Math.abs(plan.rate - 1) >= 0.03
       ? Math.round(engineSpeed.current * plan.rate * 100) / 100 : undefined;
     const pending = fetchSpeech(text, speed);
     let synthMs = 0;
@@ -414,7 +414,6 @@ export default function VoicePage() {
     let spoken = "";
     let firstWordMs: number | null = null;
     let agentIndex = -1;
-    let sentenceNo = 0;
 
     try {
       const res = await fetch("/api/voice/stream", {
@@ -459,16 +458,16 @@ export default function VoicePage() {
             cancelFiller();
             const sentence = String(ev.text);
             const plan = ev.delivery as SpeechPlan | undefined;
-            const first = sentenceNo++ === 0;
+            const opener = ev.opener === true;
             if (spec && !spec.confirmed) {
               // Ready, not spoken. Released only once the caller is confirmed
               // to have said what we guessed.
-              spec.held.push({ text: sentence, plan });
+              spec.held.push({ text: sentence, plan, opener });
               continue;
             }
             firstWordMs ??= Number(ev.msSinceStart);
             spoken = spoken ? `${spoken} ${sentence}` : sentence;
-            enqueueSpeech(sentence, plan, first);
+            enqueueSpeech(sentence, plan, opener);
             setThinking(false);
 
             setThinking(false);
@@ -648,7 +647,7 @@ export default function VoicePage() {
     inflightSpec.current = null;
     setTurns((t) => [...t, { who: "you", text }]);
     const held = spec ? spec.held.splice(0) : [];
-    held.forEach((h, i) => enqueueSpeech(h.text, h.plan, i === 0));
+    held.forEach((h) => enqueueSpeech(h.text, h.plan, h.opener));
     if (held.length > 0) setThinking(false);
   }, [enqueueSpeech]);
 

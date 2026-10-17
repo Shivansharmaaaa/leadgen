@@ -127,7 +127,8 @@ function llmHistoryFrom(
 const MAX_TOOL_ITERATIONS = 3;
 
 export type VoiceEvent =
-  | { type: "sentence"; text: string; msSinceStart: number }
+  /** `opener`: a fast-path opener, pre-rendered by the TTS server at its default speed. */
+  | { type: "sentence"; text: string; msSinceStart: number; opener?: boolean }
   | { type: "tool"; name: string; ok: boolean; ms: number }
   | { type: "escalated"; reason: string }
   | { type: "held"; reason: string }
@@ -473,7 +474,7 @@ export async function* runVoiceTurn(opts: {
     if (fast.kind === "prefix") {
       spokenPrefix = fast.text;
       firstWordMs = Date.now() - started;
-      yield { type: "sentence", text: fast.text, msSinceStart: firstWordMs };
+      yield { type: "sentence", text: fast.text, msSinceStart: firstWordMs, opener: true };
     }
   }
 
