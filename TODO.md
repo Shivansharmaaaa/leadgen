@@ -28,7 +28,7 @@ marked with what actually happened, not what was intended.
 
 - [x] typecheck — clean
 - [x] `learn:test` (hot 95 vs cold 18), `uplift:test` (+499% bookings vs conversion ranking), `feature:test`, `fed:test` (AUC 0.803 at ε≈8) — all pass
-- [~] `npm run smoke` — **fixed first**: it began by deleting every contact of the demo tenant (and could text via live Twilio). Now runs on its own copy (`northside-hvac-smoke`) with sending off — `74c38b7`; verified with the scripted provider (northside kept all 93 contacts). Real-model run after training
+- [x] `npm run smoke` — **fixed first**: it began by deleting every contact of the demo tenant (and could text via live Twilio). Now runs on its own copy (`northside-hvac-smoke`) with sending off — `74c38b7`; verified with the scripted provider, then **run with llama3.1 at 09:58**: cross-channel identity resolved Instagram + call to one contact, price quoted only from the knowledge base, lawyer/refund escalated by rule with the new handover reply, emergency lead alerted; the model invented "1pm or 3pm" and **Gate 2 held it** (the voice session is porting its calendar-first fix into `runtime.ts`). Northside's contacts untouched (114 → 114)
 - [x] `memory:test` — needs no model after all: facts extracted, a corrected gate code supersedes the old one (old row kept for audit)
 - [ ] `npm run eval` (text channels) — needs Ollama, after training
 - [ ] voice preflight — needs Ollama, after training
