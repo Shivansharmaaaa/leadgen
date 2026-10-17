@@ -1,5 +1,6 @@
 import {
   personaFor, planDelivery, planReply, stripStageDirections, toElevenLabs, toSsml, toInstruction, toSpeedOnly, toReferenceClip,
+  kokoroStress,
 } from "@/server/voice/delivery";
 import { safetyReply } from "@/server/core/guardrails";
 
@@ -93,6 +94,13 @@ check("an instruction names the mood, pace and stress", instr.includes("clearly"
 const kokoro = toSpeedOnly(offer, 0.85);
 check("speed-only engines get speed × rate", kokoro.speed === Math.round(0.85 * offer.rate * 100) / 100, String(kokoro.speed));
 
+check("Kokoro text is unmarked unless stress is asked for", kokoro.text === offer.text);
+const stressed = toSpeedOnly(offer, 0.85, { stress: true }).text;
+check("with stress, the day in each offered time is marked", stressed === "I have [Tuesday](+1) at 10 AM or [Wednesday](+1) at 2:30 PM.", stressed);
+check("a spoken price stresses the amount, not 'and' or the unit",
+  kokoroStress("It's a hundred and fifty dollars.", ["a hundred and fifty dollars"]) === "It's a [hundred](+1) and [fifty](+1) dollars.",
+  kokoroStress("It's a hundred and fifty dollars.", ["a hundred and fifty dollars"]));
+check("words outside a stressed span are untouched", kokoroStress("Call us on Tuesday.", []) === "Call us on Tuesday.");
 const clips = new Set(["alex-warm", "alex-calm"]);
 check("a cloning engine gets the clip recorded for that style", toReferenceClip(gas[0], alex, clips).clip === "alex-calm");
 check("… and the persona's base clip when that style has none", toReferenceClip(booked, alex, clips).clip === "alex-warm");

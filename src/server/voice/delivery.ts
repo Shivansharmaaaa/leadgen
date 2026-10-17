@@ -239,9 +239,39 @@ export function toInstruction(d: Delivery, persona: Persona): string {
   return `Speak ${MOOD[d.style]}, ${pace}, as ${persona.description}.${stress}`;
 }
 
-/** Engines with speed and nothing else (Kokoro): the pace, plus silence the player inserts. */
-export function toSpeedOnly(d: Delivery, engineDefault: number) {
-  return { text: d.text, speed: round(engineDefault * d.rate), pauseBeforeMs: d.pauseBeforeMs, pauseAfterMs: d.pauseAfterMs };
+/** Words inside a stressed span that carry no stress of their own. */
+const UNSTRESSED = /^(?:at|and|or|a|an|the|of|for|on|in|to|is|it's|am|pm|dollars|pounds|euros|bucks)$/i;
+
+/**
+ * Kokoro's G2P (misaki) reads "[word](+1)" as a stress mark: tested through
+ * :8787/speak, the markup is parsed rather than spoken and changes the audio.
+ * Only plain words are marked; digits are left as they are, untested.
+ */
+export function kokoroStress(text: string, emphasis: string[]): string {
+  const ranges: [number, number][] = [];
+  for (const e of emphasis) {
+    const at = text.indexOf(e);
+    if (at >= 0 && !ranges.some(([a, b]) => at < b && at + e.length > a)) ranges.push([at, at + e.length]);
+  }
+  ranges.sort((x, y) => x[0] - y[0]);
+  let out = "", cursor = 0;
+  for (const [a, b] of ranges) {
+    out += text.slice(cursor, a) + text.slice(a, b).replace(/[A-Za-z][A-Za-z'-]*/g, (w) => (UNSTRESSED.test(w) ? w : `[${w}](+1)`));
+    cursor = b;
+  }
+  return out + text.slice(cursor);
+}
+
+/**
+ * Engines with speed and nothing else (Kokoro): the pace, plus silence the
+ * player inserts. `stress` adds Kokoro's stress marks; off until someone has
+ * listened and confirmed it sounds like emphasis.
+ */
+export function toSpeedOnly(d: Delivery, engineDefault: number, opts: { stress?: boolean } = {}) {
+  return {
+    text: opts.stress ? kokoroStress(d.text, d.emphasis) : d.text,
+    speed: round(engineDefault * d.rate), pauseBeforeMs: d.pauseBeforeMs, pauseAfterMs: d.pauseAfterMs,
+  };
 }
 
 /**
