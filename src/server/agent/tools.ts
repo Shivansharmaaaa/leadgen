@@ -3,7 +3,7 @@ import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { addDays, addMinutes, startOfDay, isBefore, isAfter } from "date-fns";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
-  db, appointments, leads, contacts, conversations, events, locations, agentRuns,
+  db, appointments, leads, contacts, conversations, events, locations, agentRuns, messages,
   type tenants, type BusinessHours, type ToolCallRecord,
 } from "@/server/db";
 import { linkIdentifierToContact } from "@/server/core/identity";
@@ -307,6 +307,21 @@ async function checkAvailability(ctx: AgentContext, input: Record<string, unknow
   };
 }
 
+/** Did the agent say this time ("9am", "3:00 PM", "nine thirty" aside) in its last few replies? */
+async function agentSaid(conversationId: string, at: Date, tz: string): Promise<boolean> {
+  const recent = await db.query.messages.findMany({
+    columns: { body: true },
+    where: and(eq(messages.conversationId, conversationId), eq(messages.direction, "outbound")),
+    orderBy: desc(messages.createdAt),
+    limit: 6,
+  });
+  const h = formatInTimeZone(at, tz, "h");
+  const m = formatInTimeZone(at, tz, "mm");
+  const ap = formatInTimeZone(at, tz, "a").toLowerCase()[0]; // "a" or "p"
+  const said = new RegExp(`\\b${h}${m === "00" ? "(?::00)?" : `:${m}`}\\s*${ap}\\.?\\s?m\\b`, "i");
+  return recent.some((r) => said.test(r.body));
+}
+
 /** Is this a start check_availability could have offered: in hours, on the 30-minute grid? */
 function withinHours(startsAt: Date, duration: number, hours: BusinessHours[], tz: string): boolean {
   const dateStr = formatInTimeZone(startsAt, tz, "yyyy-MM-dd");
@@ -339,15 +354,15 @@ async function bookAppointment(ctx: AgentContext, input: Record<string, unknown>
   const offerable = (d: Date) =>
     !isBefore(d, addMinutes(new Date(), 60)) &&
     withinHours(d, duration, ctx.location?.hours ?? [], tz);
-  // The model reads "9:00 AM" off a slot's label and writes "09:00:00Z".
-  // Slots are given in local time with an offset, so a UTC time was written
-  // by the model, not copied, and its clock digits are what it meant: read
-  // them as local first. Otherwise the literal instant first.
+  // The model reads "9:00 AM" off a slot's label and writes "09:00:00Z",
+  // which taken literally is 5 AM. Code passing toISOString() means the
+  // literal instant. When only one reading is bookable, take it; when both
+  // are, take the local one only if the agent actually said that time.
   const wallClock = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/)?.[1];
   const local = wallClock ? fromZonedTime(wallClock, tz) : null;
-  const writtenAsUtc = /(?:Z|[+-]00:?00)$/i.test(raw) && formatInTimeZone(startsAt, tz, "XXX") !== "Z";
-  const candidates = (writtenAsUtc ? [local, startsAt] : [startsAt, local]).filter((d): d is Date => Boolean(d));
-  startsAt = candidates.find(offerable) ?? startsAt;
+  if (local && local.getTime() !== startsAt.getTime() && offerable(local)) {
+    if (!offerable(startsAt) || (await agentSaid(ctx.conversationId, local, tz))) startsAt = local;
+  }
   if (!offerable(startsAt)) {
     const day = formatInTimeZone(startsAt, tz, "yyyy-MM-dd");
     const open = await checkAvailability(ctx, { from_date: day, days: 1, duration_minutes: duration });
