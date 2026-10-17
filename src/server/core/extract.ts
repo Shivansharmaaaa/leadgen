@@ -36,3 +36,30 @@ export function extractIdentifiers(text: string, country = "US"): ExtractedIdent
 
   return { phones: [...phones], emails: [...emails] };
 }
+
+/**
+ * A name the caller states outright. Booking needs a name on file, and on a
+ * call the details are saved after the turn, so the turn where the caller
+ * says "my name is Sam Carter" could not book and the model said "booked"
+ * anyway. Strict on purpose: lowercase only after an explicit "my name is" or
+ * "call me"; after "I'm", "it's" or "this is" the name must be capitalised, so
+ * "I'm calling about my AC" never produces a customer called "Calling".
+ */
+const NAME_EXPLICIT = /\b(?:my name is|my name's|name is|name's|call me)\s+([A-Za-z][A-Za-z'-]*)(?:\s+([A-Za-z][A-Za-z'-]*))?/i;
+const NAME_IMPLICIT = /\b(?:[Tt]his is|[Ii]t's|[Ii]t is|I'm|I am)\s+([A-Z][a-z'-]+)(?:\s+([A-Z][a-z'-]+))?/;
+const NOT_A_NAME = new Set([
+  "and", "a", "an", "the", "just", "not", "no", "so", "very", "really", "still", "also", "here", "there",
+  "calling", "looking", "trying", "wondering", "having", "getting", "going", "speaking", "interested",
+  "fine", "good", "great", "okay", "ok", "sure", "sorry", "home", "available", "urgent", "about", "from",
+  "with", "at", "in", "on", "for", "my", "your", "our", "it", "is", "and", "but", "or", "please",
+]);
+
+const titleCase = (w: string) => w[0].toUpperCase() + w.slice(1).toLowerCase();
+
+export function extractName(text: string): string | null {
+  const m = text.match(NAME_EXPLICIT) ?? text.match(NAME_IMPLICIT);
+  if (!m || NOT_A_NAME.has(m[1].toLowerCase())) return null;
+  const parts = [m[1]];
+  if (m[2] && !NOT_A_NAME.has(m[2].toLowerCase())) parts.push(m[2]);
+  return parts.map(titleCase).join(" ");
+}

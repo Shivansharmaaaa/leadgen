@@ -50,6 +50,14 @@ const TRANSACTIONAL = [
 /** Words that only come up when someone is talking about their system. */
 const DOMAIN = /\b(a\/?c|air ?con(?:ditioner|ditioning)?|furnace|boiler|heat ?pump|hvac|thermostat|duct(?:work|s)?|condenser|compressor|vents?|radiator|mini ?split|filter)\b/i;
 
+/**
+ * The agent's last message put a booking question to the caller: "9:00 or
+ * 9:30?", "Shall I set up that visit?". Whatever comes back — "yes please",
+ * "9:30", "what have you got?" — needs the booking tools, and the chat tier
+ * has none. "Anything else I can help with?" names no booking, so it isn't one.
+ */
+const BOOKING_QUESTION = /\b(?:book\w*|schedul\w*|appointments?|visit|slots?|times?|come out|send someone|technician|\d{1,2}(?::\d{2})?\s?(?:am|pm))\b[^?]*\?/i;
+
 /** Turns that are plainly just conversation. */
 const CONVERSATIONAL = [
   /^(?:hi|hello|hey|good (?:morning|afternoon|evening))\b/i,
@@ -64,6 +72,8 @@ export async function routeTurn(
   tenantId: string,
   text: string,
   businessName: string,
+  /** What the agent said last, if anything: an open booking question changes the tier. */
+  lastAgentReply?: string,
 ): Promise<Route> {
   const t = text.trim();
 
@@ -82,6 +92,10 @@ export async function routeTurn(
   // Tuesday?" needs the booking path, not the chat one.
   if (TRANSACTIONAL.some((re) => re.test(t))) {
     return { tier: "transact", reason: "tool or commitment needed", fastPath: fast };
+  }
+
+  if (lastAgentReply && BOOKING_QUESTION.test(lastAgentReply)) {
+    return { tier: "transact", reason: "answers a booking question", fastPath: fast };
   }
 
   // A short turn that names the equipment is the caller getting to the point,

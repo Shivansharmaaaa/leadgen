@@ -122,6 +122,32 @@ export type VoiceEvent =
   | { type: "done"; fullText: string; latencyMs: number; firstWordMs: number | null; provider: string; model: string }
   | { type: "error"; message: string };
 
+/**
+ * "I've got you booked for Saturday at 9", said with no booking made. The
+ * caller hangs up believing it and nobody comes.
+ */
+const BOOKING_CLAIM = /\b(?:(?:i|we)(?:'ve| have)\s+(?:got\s+you\s+|now\s+)?(?:booked|scheduled|confirmed)|you(?:'re| are)\s+(?:all\s+)?(?:booked|scheduled|confirmed)|booked\s+you|got\s+you\s+(?:booked|down)\s+for|(?:i|we)(?:'ll| will)\s+send\s+(?:you\s+)?(?:a|the)\s+confirmation)\b/i;
+
+/**
+ * Screen one sentence before it is spoken. Gate 2 runs after the turn, when a
+ * caller has already heard every word, so the two failures seen on test
+ * calls are stopped here instead: a booking claimed but not made is never
+ * said, and the intensifiers Gate 2 holds a reply for are dropped from the
+ * sentence rather than letting the whole reply be held ("We can definitely
+ * send someone" → "We can send someone").
+ */
+function screenSentence(sentence: string, booked: boolean): string | null {
+  if (!booked && BOOKING_CLAIM.test(sentence)) return null;
+  const out = sentence
+    // A template slot the model left unfilled: "with Technician [Name]".
+    .replace(/\s*(?:with\s+)?(?:(?:our\s+)?(?:technician|tech|engineer|mr\.?|ms\.?|mrs\.?|dr\.?)\s+)?\[[^\]]*\]/gi, "")
+    .replace(/^(?:definitely|certainly|absolutely)\b\s*([,!.])?\s*/i, (_m, p: string | undefined) => (p === "," ? "Sure, " : "Sure. "))
+    .replace(/\s*\b(?:definitely|certainly)\b,?/gi, "")
+    .replace(/\bSure\.\s*$/, "Sure.")
+    .trim();
+  return out || null;
+}
+
 /** Split a token stream into speakable sentences as soon as each completes. */
 function makeSentencer(opts: { hadPrefix: boolean } = { hadPrefix: false }) {
   let buffer = "";
@@ -208,6 +234,7 @@ export async function* runVoiceTurn(opts: {
   const offeredSlot = ordered.some(
     (m) => m.direction === "outbound" && /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i.test(m.body),
   );
+  const JOB_REQUEST = /\b(?:need|want|get|send|have) (?:someone|somebody|a (?:tech|technician|engineer))\b|\b(?:service|repair|fix|replace|install|check|look at|tune up)\s+(?:my|the|our|a new|a|an)\b|\b(?:tune[- ]?ups?|maintenance|servicing)\b/i;
   const SCHEDULING = /\b(?:book|schedule|appointment|come out|come round|visit|availability|when can|what times?|slots?|today|tomorrow|tonight|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|asap|as soon as|emergency|urgent)\b/i;
   const schedulingInPlay =
     offeredSlot ||
@@ -215,6 +242,10 @@ export async function* runVoiceTurn(opts: {
     // A described fault is a job: "no heat and a baby in the house" needs a
     // time today, and without the tool the model can only promise vaguely.
     ordered.slice(-4).some((m) => m.direction === "inbound" && FAULT.test(m.body)) ||
+    // So is asking for work: "I need someone to service my heat pump", then
+    // "what have you got?". A verb needs an object ("install my", "fix the"),
+    // so "what brands do you install" stays a product question.
+    ordered.slice(-4).some((m) => m.direction === "inbound" && JOB_REQUEST.test(m.body)) ||
     // The agent itself offered a visit, e.g. the product answer above.
     ordered.slice(-2).some((m) => m.direction === "outbound" && /\bset up (?:that|a) visit|book (?:you|a|that)\b/i.test(m.body));
   const activeTools = toolsFor({
@@ -361,7 +392,10 @@ export async function* runVoiceTurn(opts: {
 
   const businessNameForRoute = tenant.settings?.businessName ?? tenant.name;
   const route = latestInbound
-    ? await routeTurn(tenant.id, latestInbound.body, businessNameForRoute)
+    ? await routeTurn(
+        tenant.id, latestInbound.body, businessNameForRoute,
+        [...ordered].reverse().find((m) => m.direction === "outbound")?.body,
+      )
     : null;
 
   /**
@@ -564,14 +598,51 @@ export async function* runVoiceTurn(opts: {
     );
   }
 
+  /**
+   * Times come from the calendar, not the model. Told to "ALWAYS call
+   * check_availability", the 3B model still made slots up ("2:30 to 4:00 PM")
+   * and Gate 2 held the reply, leaving the caller with nothing. While
+   * scheduling is in play, check the calendar here (a read, a few ms) and
+   * hand the model the real slots — every turn, not only the first: once
+   * times were offered, the next turn could not see the list and offered
+   * "11:15", which is not a slot, and booking needs the exact start time.
+   * It also saves the tool round trip, which on a call is a second generation.
+   */
+  const toolRecords: ToolCallRecord[] = [];
+  if (schedulingInPlay && activeTools.some((t) => t.name === "check_availability")) {
+    const t0 = Date.now();
+    const input = { service: "service visit" };
+    const result = await executeTool(ctx, "check_availability", input)
+      .catch((e) => ({ ok: false, error: String(e) }));
+    const ms = Date.now() - t0;
+    toolRecords.push({ name: "check_availability", input, output: result, ms });
+    yield { type: "tool", name: "check_availability", ok: (result as { ok?: boolean }).ok !== false, ms };
+    notes.push(
+      `# Open slots, checked just now\n${JSON.stringify(result)}\n` +
+      "When you offer times, offer two of THESE, by day and time, and no others. If there " +
+      "are none, say so and offer a callback.",
+    );
+  }
+
   const context = notes.length ? `${built.context}\n\n${notes.join("\n\n")}` : built.context;
 
   const llmHistory = llmHistoryFrom(ordered);
 
   const provider = getProvider("voice");
-  const toolRecords: ToolCallRecord[] = [];
   let fullText = "";
   let totalIn = 0, totalOut = 0;
+
+  // What the caller actually heard, after screenSentence. Gate 2 judges this,
+  // not the raw model text: a dropped word was never said.
+  const said: string[] = [];
+  const speak = (sentence: string): string | null => {
+    const booked = toolRecords.some(
+      (t) => t.name === "book_appointment" && (t.output as { ok?: boolean } | null)?.ok !== false,
+    );
+    const out = screenSentence(sentence, booked);
+    if (out) said.push(out);
+    return out;
+  };
 
   try {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
@@ -584,11 +655,10 @@ export async function* runVoiceTurn(opts: {
         turnText = turn.text;
         if (turn.text) {
           firstWordMs ??= Date.now() - started;
-          for (const s of sentencer.push(turn.text)) {
-            yield { type: "sentence", text: s, msSinceStart: Date.now() - started };
+          for (const s of [...sentencer.push(turn.text), sentencer.flush()]) {
+            const text = s && speak(s);
+            if (text) yield { type: "sentence", text, msSinceStart: Date.now() - started };
           }
-          const rest = sentencer.flush();
-          if (rest) yield { type: "sentence", text: rest, msSinceStart: Date.now() - started };
         }
         totalIn += turn.usage.inputTokens; totalOut += turn.usage.outputTokens;
 
@@ -619,13 +689,15 @@ export async function* runVoiceTurn(opts: {
         if (/^\s*\{/.test(turnText)) continue;
         firstWordMs ??= Date.now() - started;
         for (const s of sentencer.push(step.value)) {
-          yield { type: "sentence", text: s, msSinceStart: Date.now() - started };
+          const text = speak(s);
+          if (text) yield { type: "sentence", text, msSinceStart: Date.now() - started };
         }
       }
 
       const typedToolCall = /^\s*\{/.test(turnText);
       const rest = typedToolCall ? null : sentencer.flush();
-      if (rest) yield { type: "sentence", text: rest, msSinceStart: Date.now() - started };
+      const restText = rest && speak(rest);
+      if (restText) yield { type: "sentence", text: restText, msSinceStart: Date.now() - started };
       const spoken = typedToolCall ? "" : turnText;
 
       totalIn += final?.usage.inputTokens ?? 0;
@@ -670,6 +742,8 @@ export async function* runVoiceTurn(opts: {
     return;
   }
 
+  fullText = said.join(" ");
+
   /**
    * Silence is the worst possible outcome on a phone call.
    *
@@ -699,11 +773,12 @@ export async function* runVoiceTurn(opts: {
       }
     }
 
-    if (!fullText.trim()) {
-      fullText = "Sorry, could you say that again?";
-    }
+    const lines = fullText.split(/(?<=[.!?])\s+/).filter(Boolean)
+      .map((s) => screenSentence(s, false)).filter((s): s is string => Boolean(s));
+    if (lines.length === 0) lines.push("Sorry, could you say that again?");
+    fullText = lines.join(" ");
 
-    for (const sentence of fullText.split(/(?<=[.!?])\s+/).filter(Boolean)) {
+    for (const sentence of lines) {
       yield { type: "sentence", text: sentence, msSinceStart: Date.now() - started };
     }
     firstWordMs ??= Date.now() - started;

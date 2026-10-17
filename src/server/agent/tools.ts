@@ -287,7 +287,9 @@ async function checkAvailability(ctx: AgentContext, input: Record<string, unknow
 
         if (!inPast && !overlaps) {
           slots.push({
-            starts_at: cursor.toISOString(),
+            // Local time with its offset, not UTC: shown "…T19:00:00.000Z"
+            // beside "3:00 PM", a small model wrote "…T15:00:00.000Z".
+            starts_at: formatInTimeZone(cursor, tz, "yyyy-MM-dd'T'HH:mm:ssXXX"),
             label: formatInTimeZone(cursor, tz, "EEEE d MMM, h:mm a"),
           });
           if (slots.length >= 8) break;
@@ -305,17 +307,58 @@ async function checkAvailability(ctx: AgentContext, input: Record<string, unknow
   };
 }
 
+/** Is this a start check_availability could have offered: in hours, on the 30-minute grid? */
+function withinHours(startsAt: Date, duration: number, hours: BusinessHours[], tz: string): boolean {
+  const dateStr = formatInTimeZone(startsAt, tz, "yyyy-MM-dd");
+  const weekday = Number(formatInTimeZone(startsAt, tz, "i")) % 7; // ISO 1-7 (Mon-Sun) -> 0-6 (Sun-Sat)
+  return hours.filter((h) => h.day === weekday).some((w) => {
+    const open = fromZonedTime(`${dateStr}T${w.open}:00`, tz);
+    const close = fromZonedTime(`${dateStr}T${w.close}:00`, tz);
+    const minutes = (startsAt.getTime() - open.getTime()) / 60_000;
+    return minutes >= 0 && minutes % 30 === 0 && !isAfter(addMinutes(startsAt, duration), close);
+  });
+}
+
 async function bookAppointment(ctx: AgentContext, input: Record<string, unknown>): Promise<ToolResult> {
   const contact = await db.query.contacts.findFirst({ where: eq(contacts.id, ctx.contactId) });
   if (!contact) return { ok: false, error: "contact not found" };
   if (!contact.displayName) return { ok: false, error: "need the customer's name first — call save_contact_detail" };
   if (!contact.primaryPhone) return { ok: false, error: "need a callback phone number first — call save_contact_detail" };
 
-  const startsAt = new Date(String(input.starts_at));
+  // A time with no zone is the business's local time, not the server's.
+  const tz = ctx.location?.timezone ?? ctx.tenant.timezone;
+  const raw = String(input.starts_at);
+  let startsAt = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(raw) ? fromZonedTime(raw, tz) : new Date(raw);
   if (Number.isNaN(startsAt.getTime())) return { ok: false, error: "starts_at is not a valid ISO datetime" };
-  if (isBefore(startsAt, new Date())) return { ok: false, error: "that time is in the past" };
 
   const duration = clampInt(input.duration_minutes, 15, 480, 60);
+
+  // Only a time check_availability would offer can be booked: inside business
+  // hours, on its 30-minute grid, with an hour's notice. On a test call the
+  // model booked 5 AM and nothing stopped it.
+  const offerable = (d: Date) =>
+    !isBefore(d, addMinutes(new Date(), 60)) &&
+    withinHours(d, duration, ctx.location?.hours ?? [], tz);
+  // The model reads "9:00 AM" off a slot's label and writes "09:00:00Z".
+  // Slots are given in local time with an offset, so a UTC time was written
+  // by the model, not copied, and its clock digits are what it meant: read
+  // them as local first. Otherwise the literal instant first.
+  const wallClock = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/)?.[1];
+  const local = wallClock ? fromZonedTime(wallClock, tz) : null;
+  const writtenAsUtc = /(?:Z|[+-]00:?00)$/i.test(raw) && formatInTimeZone(startsAt, tz, "XXX") !== "Z";
+  const candidates = (writtenAsUtc ? [local, startsAt] : [startsAt, local]).filter((d): d is Date => Boolean(d));
+  startsAt = candidates.find(offerable) ?? startsAt;
+  if (!offerable(startsAt)) {
+    const day = formatInTimeZone(startsAt, tz, "yyyy-MM-dd");
+    const open = await checkAvailability(ctx, { from_date: day, days: 1, duration_minutes: duration });
+    const offer = ((open as { slots?: { starts_at: string; label: string }[] }).slots ?? [])
+      .slice(0, 4).map((s) => `${s.label} (${s.starts_at})`).join("; ");
+    return {
+      ok: false,
+      error: `${formatInTimeZone(startsAt, tz, "EEEE d MMM, h:mm a")} is not an open slot. ` +
+        (offer ? `Open that day: ${offer}.` : "Nothing is open that day — call check_availability."),
+    };
+  }
   const endsAt = addMinutes(startsAt, duration);
 
   // Re-check the slot at write time: availability may have changed mid-conversation.
@@ -370,7 +413,6 @@ async function bookAppointment(ctx: AgentContext, input: Record<string, unknown>
     payload: { appointmentId: appt.id, service: appt.service, startsAt: startsAt.toISOString() },
   });
 
-  const tz = ctx.location?.timezone ?? ctx.tenant.timezone;
   return {
     ok: true,
     appointment_id: appt.id,
