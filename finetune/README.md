@@ -98,10 +98,17 @@ so each one is read once with all its targets, rather than once per target.
 
 ### Considered and left out
 
-- **Taskmaster** (Google, CC BY 4.0) has spoken two-person dialogues,
-  including auto-repair appointments, but no tool calls. It could only teach
+- **Taskmaster's assistant turns** (Google, CC BY 4.0) have spoken two-person dialogues,
+  including auto-repair appointments, but no tool calls. They could only teach
   style, and crowdsourced phrasing is the style the playbook is trying to
-  avoid (see `src/server/agent/playbook.ts`).
+  avoid (see `src/server/agent/playbook.ts`). Its *caller* turns are used:
+  `python3 finetune/fetch_taskmaster.py` writes `data/finetune/real_callers.json`,
+  258 transcribed ways real callers gave a name (and sometimes a number) —
+  spelled out, surname first, "under the name…", "area code…" — from the
+  train side of a hash split of the woz dialogues. Each row has the caller's
+  words, the name and number they gave, and a template for reuse with other
+  names. Taskmaster-1: Byrne et al. 2019, CC BY 4.0,
+  https://github.com/google-research-datasets/Taskmaster.
 - **MultiWOZ**: hotel and restaurant booking, further from the domain than
   SGD's services and with less consistent annotation.
 - **Hugging Face / Kaggle** sets were unreachable from the environment this
