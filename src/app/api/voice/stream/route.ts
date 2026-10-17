@@ -21,6 +21,8 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => ({}))) as {
     sessionId?: string; text?: string; tenant?: string; speculative?: boolean;
     alternatives?: string[]; discard?: string;
+    /** Start a call the agent places: it speaks first, as a sales follow-up. */
+    outbound?: { name?: string; interest?: string };
   };
   const speculative = Boolean(body.speculative);
   // Other hearings of the same utterance when the two recognisers disagreed.
@@ -31,7 +33,7 @@ export async function POST(req: Request) {
     .map((a) => a.trim().slice(0, 300));
 
   const text = (body.text ?? "").trim();
-  if (!text) return new Response("text is required", { status: 400 });
+  if (!text && !body.outbound) return new Response("text is required", { status: 400 });
 
   const tenant = await db.query.tenants.findFirst({
     where: eq(tenants.slug, body.tenant ?? "northside-hvac"),
@@ -67,6 +69,38 @@ export async function POST(req: Request) {
       tenantId: tenant.id, contactId: contact.id,
       channel: "voice", externalThreadId: sessionId,
     }).returning();
+  }
+
+  /**
+   * A call the agent places. Framed as a follow-up to someone who asked to be
+   * contacted (a website enquiry), which is the lawful shape of an outbound AI
+   * call; it says it is an AI in the first sentence. The opener is fixed text,
+   * so it plays instantly, and its meta tells every later turn what this call
+   * is for (runVoiceTurn reads it).
+   */
+  if (body.outbound) {
+    const name = String(body.outbound.name ?? "").replace(/[^A-Za-z' -]/g, "").trim().slice(0, 40) || null;
+    const interest = OUTBOUND_INTERESTS[String(body.outbound.interest ?? "")] ?? OUTBOUND_INTERESTS.ac_replacement;
+    // Placing a call means having their number, so the booking tool (which
+    // needs a name and a phone) is available from the start.
+    await db.update(contacts).set({
+      ...(name && !contact.displayName ? { displayName: name } : {}),
+      ...(!contact.primaryPhone ? { primaryPhone: callerId } : {}),
+    }).where(eq(contacts.id, contact.id));
+    const businessName = tenant.settings?.businessName ?? tenant.name;
+    const agentName = tenant.settings?.agentName ?? "Alex";
+    const opener =
+      `Hi${name ? ` ${name}` : ""}, this is ${agentName}, an AI assistant calling from ${businessName}. ` +
+      `You asked us about ${interest} on our website, so I'm following up. Is now a good time for a quick chat?`;
+    await db.insert(messagesTable).values({
+      tenantId: tenant.id, conversationId: conversation.id,
+      direction: "outbound", channel: "voice", authorType: "ai", body: opener, status: "sent",
+      meta: { outboundCall: { name, interest } },
+    });
+    return sse([
+      ...opener.split(/(?<=[.!?])\s+/).map((s) => ({ type: "sentence", text: s, msSinceStart: 0 })),
+      { type: "done", fullText: opener, latencyMs: 0, firstWordMs: 0, provider: "rule", model: "outbound-opener" },
+    ]);
   }
 
   // A guess the client abandoned after it had already been answered: the
@@ -177,6 +211,14 @@ export async function POST(req: Request) {
 
   return new Response(stream, { headers: SSE_HEADERS });
 }
+
+/** What the lead asked about on the website: the reason for the call. */
+const OUTBOUND_INTERESTS: Record<string, string> = {
+  ac_replacement: "a quote for replacing your air conditioning",
+  heat_pump: "switching to a heat pump",
+  furnace_tuneup: "a furnace tune-up before winter",
+  maintenance_plan: "our maintenance plan",
+};
 
 const SSE_HEADERS = {
   "content-type": "text/event-stream; charset=utf-8",

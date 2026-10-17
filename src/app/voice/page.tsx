@@ -106,6 +106,14 @@ export default function VoicePage() {
    */
   const utterance = useRef("");
   const liveInterim = useRef("");
+  /**
+   * Chrome keeps refining a result after we commit on its interim text, then
+   * sends the final as if new: "yes I am free right now" was answered twice,
+   * and the second turn cut off the first reply at "Got it.". Per result
+   * index: the transcript as committed, and the latest seen since.
+   */
+  const committedByIndex = useRef(new Map<number, string>());
+  const latestByIndex = useRef(new Map<number, string>());
   const lastPending = useRef("");
   const lastSpeechAt = useRef(0);
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -336,7 +344,11 @@ export default function VoicePage() {
     text: string,
     // `rerun`: the caller's bubble is already on screen (a released guess the
     // server then declined), so only the reply is still owed.
-    opts: { speculative?: boolean; alternatives?: string[]; rerun?: boolean; discard?: string } = {},
+    opts: {
+      speculative?: boolean; alternatives?: string[]; rerun?: boolean; discard?: string;
+      /** The agent places the call and speaks first; `text` is unused. */
+      outbound?: { name: string; interest: string };
+    } = {},
   ) => {
     const controller = new AbortController();
     if (opts.speculative) {
@@ -357,7 +369,7 @@ export default function VoicePage() {
     if (spec) currentSpec.current = spec;
 
     if (!opts.speculative) {
-      if (!opts.rerun) setTurns((t) => [...t, { who: "you", text }]);
+      if (!opts.rerun && !opts.outbound) setTurns((t) => [...t, { who: "you", text }]);
       setThinking(true);
     }
 
@@ -400,6 +412,7 @@ export default function VoicePage() {
           speculative: opts.speculative,
           alternatives: opts.alternatives?.length ? opts.alternatives : undefined,
           discard,
+          outbound: opts.outbound,
         }),
         signal: controller.signal,
       });
@@ -635,6 +648,8 @@ export default function VoicePage() {
       if (speculationTimer.current) { clearTimeout(speculationTimer.current); speculationTimer.current = null; }
 
       const browserText = `${utterance.current} ${liveInterim.current}`.trim();
+      for (const [i, full] of latestByIndex.current) committedByIndex.current.set(i, full);
+      latestByIndex.current.clear();
       const start = utteranceStart.current;
       utterance.current = "";
       liveInterim.current = "";
@@ -714,7 +729,12 @@ export default function VoicePage() {
         for (let k = 1; k < result.length; k++) {
           if ((result[k]?.confidence ?? 0) > (best?.confidence ?? 0)) best = result[k];
         }
-        const chunk = best?.transcript ?? result[0].transcript;
+        const full: string = best?.transcript ?? result[0].transcript;
+        latestByIndex.current.set(i, full);
+        // Already committed from this result: only words beyond it are new.
+        const prior = committedByIndex.current.get(i);
+        const chunk = prior === undefined ? full : wordsBeyond(prior, full);
+        if (!chunk.trim()) continue;
         if (result.isFinal) {
           finalText += chunk;
           const c = best?.confidence ?? 1;
@@ -848,7 +868,12 @@ export default function VoicePage() {
 
     // Visible lifecycle: a recogniser that starts but never receives audio
     // fails silently otherwise, which is exactly the failure being fixed.
-    rec.onstart = () => note("mic", "recogniser started");
+    rec.onstart = () => {
+      // A restarted recogniser numbers its results from zero again.
+      committedByIndex.current.clear();
+      latestByIndex.current.clear();
+      note("mic", "recogniser started");
+    };
     rec.onaudiostart = () => {
       note("mic", "recogniser hearing audio");
       // Attach the Parakeet capture only once Chrome's recogniser already has
@@ -878,6 +903,15 @@ export default function VoicePage() {
     recognitionRef.current?.stop();
     setListening(false);
   }, [stopCapture]);
+
+  // The agent calls you: a sales follow-up to a website enquiry.
+  const [callName, setCallName] = useState("");
+  const [callInterest, setCallInterest] = useState("ac_replacement");
+  const startSalesCall = useCallback(() => {
+    if (!listening) startListening();
+    note("call", `agent is calling about ${callInterest.replace("_", " ")}`);
+    void send("", { outbound: { name: callName.trim(), interest: callInterest } });
+  }, [listening, startListening, note, send, callName, callInterest]);
 
   const toggleMic = useCallback(() => {
     if (listening) stopListening();
@@ -940,11 +974,43 @@ export default function VoicePage() {
         borderRadius: "var(--radius)", display: "flex", flexDirection: "column", gap: 14,
       }}>
         {turns.length === 0 && (
-          <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
-            Press the mic once — it keeps listening, so just talk the way you would on a
-            call. Try: <em>“Hi, my AC is blowing warm air and the house is 84 degrees.
-            Can someone come out tomorrow?”</em>
-          </p>
+          <>
+            <p style={{ color: "var(--muted)", fontSize: 14, margin: 0 }}>
+              Press the mic once — it keeps listening, so just talk the way you would on a
+              call. Try: <em>“Hi, my AC is blowing warm air and the house is 84 degrees.
+              Can someone come out tomorrow?”</em>
+            </p>
+            <div style={{
+              display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
+              paddingTop: 12, borderTop: "1px solid var(--border)", fontSize: 14,
+            }}>
+              <span style={{ color: "var(--muted)" }}>Or let the agent call you, as a lead who asked about</span>
+              <select
+                value={callInterest}
+                onChange={(e) => setCallInterest(e.target.value)}
+                style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 7, padding: "5px 8px" }}
+              >
+                <option value="ac_replacement">replacing their AC</option>
+                <option value="heat_pump">switching to a heat pump</option>
+                <option value="furnace_tuneup">a furnace tune-up</option>
+                <option value="maintenance_plan">a maintenance plan</option>
+              </select>
+              <input
+                value={callName}
+                onChange={(e) => setCallName(e.target.value)}
+                placeholder="your first name"
+                maxLength={40}
+                style={{ background: "var(--panel-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 7, padding: "5px 8px", width: 140 }}
+              />
+              <button
+                onClick={startSalesCall}
+                disabled={!supported || thinking}
+                style={{ background: "var(--accent-dim)", color: "var(--text)", border: "1px solid var(--accent)", borderRadius: 7, padding: "6px 12px" }}
+              >
+                📞 Agent calls me
+              </button>
+            </div>
+          </>
         )}
 
         {turns.map((t, i) => <TurnRow key={i} turn={t} />)}
@@ -1007,6 +1073,22 @@ export default function VoicePage() {
   );
 }
 
+/**
+ * The words of `now` beyond what was already committed as `prior`: "" for a
+ * repeat (recased or re-punctuated), the tail for a continuation ("no I'm not
+ * having" -> "no I'm not having any issues" gives "any issues").
+ */
+function wordsBeyond(prior: string, now: string): string {
+  const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+  const pw = prior.trim().split(/\s+/).filter(Boolean);
+  const nw = now.trim().split(/\s+/).filter(Boolean);
+  const prev = new Set(pw.map(norm));
+  const overlap = nw.slice(0, pw.length).filter((w) => prev.has(norm(w))).length;
+  // Chrome rewrote the result into something else entirely: treat it as new.
+  if (pw.length > 0 && overlap / Math.min(pw.length, nw.length || 1) < 0.6) return now;
+  return nw.slice(pw.length).join(" ");
+}
+
 function TurnRow({ turn }: { turn: Turn }) {
   const isYou = turn.who === "you";
   const isSystem = turn.who === "system";
@@ -1025,7 +1107,7 @@ function TurnRow({ turn }: { turn: Turn }) {
           ⛔ held from sending — {turn.held}
         </div>
       )}
-      {(turn.tools?.length || turn.latencyMs) && (
+      {(Boolean(turn.tools?.length) || Boolean(turn.latencyMs)) && (
         <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, fontFamily: "ui-monospace, monospace" }}>
           {turn.tools?.map((t) => `${t.ok ? "✓" : "✗"} ${t.name} ${t.ms}ms`).join("  ")}
           {turn.latencyMs ? `   ·   first word ${turn.latencyMs}ms` : ""}

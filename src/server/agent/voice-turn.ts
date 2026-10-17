@@ -63,14 +63,22 @@ function toolsFor(args: {
   hasPhone: boolean;
   offeredSlot: boolean;
   schedulingInPlay: boolean;
+  /** The caller's latest words pick a time: a day, a time, "the first one". */
+  choseTime: boolean;
+  /** False on a call the agent placed, unless the caller says it's a bad time. */
+  callbackAllowed: boolean;
 }): ToolSpec[] {
-  const allowed = new Set<string>(["offer_callback"]);
+  const allowed = new Set<string>();
+  // On a sales call it placed, the 3B model answered "yeah sure, I have a few
+  // minutes" with a callback offer. A callback is for someone who is busy.
+  if (args.callbackAllowed) allowed.add("offer_callback");
   // Offered only once the conversation is about WHEN. With it always on the
   // table, a 3B model answered "what AC options do you have" with appointment
   // times, because the question contained the word "available".
   if (args.schedulingInPlay) allowed.add("check_availability");
-  // Booking needs someone to book, and a time they picked.
-  if (args.hasName && args.hasPhone && args.offeredSlot) allowed.add("book_appointment");
+  // Booking needs someone to book, a time on the table, and the caller picking
+  // one. "Okay fine, what times do you have?" was booked at 9 AM unasked.
+  if (args.hasName && args.hasPhone && args.offeredSlot && args.choseTime) allowed.add("book_appointment");
   return VOICE_TOOLS.filter((t) => allowed.has(t.name));
 }
 
@@ -124,6 +132,32 @@ export type VoiceEvent =
   | { type: "declined"; reason: string }
   | { type: "done"; fullText: string; latencyMs: number; firstWordMs: number | null; provider: string; model: string }
   | { type: "error"; message: string };
+
+/** A pick from offered times: a day, a time, an ordinal. "What times do you have?" is not one. */
+const CHOICE = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|noon)\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*(?:am|pm|a\.m\.|p\.m\.|o'?clock)\b|\bat\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:am|pm|o'?clock|thirty)\b|\b(?:first|second|earlier|later|other)\s+one\b|\beither\b/i;
+const AFFIRM = /^(?:yes|yeah|yep|sure|ok(?:ay)?|perfect|great|sounds good|that works|book it|let'?s do it|go ahead)\b/i;
+const TIME_NAMED = /\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b/gi;
+
+/**
+ * Has the caller picked a time since times were first offered? Not only in
+ * the latest turn: "the first one please", then "my name is Riley, 617…" is
+ * a pick followed by the details booking needs.
+ */
+function choseATime(ordered: { direction: string; body: string }[]): boolean {
+  const firstOffer = ordered.findIndex((m) => m.direction === "outbound" && new RegExp(TIME_NAMED).test(m.body));
+  if (firstOffer < 0) return false;
+  return ordered.slice(firstOffer + 1).some((m, i, rest) => {
+    if (m.direction !== "inbound") return false;
+    if (CHOICE.test(m.body)) return true;
+    // "Yes" to a single time the agent had just named is choosing it.
+    const before = i > 0 ? rest[i - 1] : ordered[firstOffer];
+    return AFFIRM.test(m.body.trim()) && before.direction === "outbound" &&
+      (before.body.match(TIME_NAMED) ?? []).length === 1;
+  });
+}
+
+/** The caller can't talk now: the only time a callback is offered on a call the agent placed. */
+const BUSY = /\b(?:busy|bad time|not (?:a good time|now|right now)|call (?:me )?(?:back|later)|later|driving|at work|in a meeting|can'?t talk)\b/i;
 
 /** The caller says it is urgent, in so many words. */
 const URGENT = /\b(?:emergency|urgent(?:ly)?|asap|as soon as possible|right away|straight away|immediately)\b/i;
@@ -236,12 +270,20 @@ export async function* runVoiceTurn(opts: {
   };
 
   const offeredSlot = slotOffered(ordered);
-  const schedulingInPlay = inPlay(ordered);
+  // A call the agent placed (the route's outbound opener): its whole point is
+  // a booked visit, so scheduling is always in play.
+  const outboundCall = ordered
+    .map((m) => (m.meta as { outboundCall?: { name: string | null; interest: string } } | null)?.outboundCall)
+    .find(Boolean);
+  const schedulingInPlay = inPlay(ordered) || Boolean(outboundCall);
+  const latestText = latestInbound?.body ?? "";
   const activeTools = toolsFor({
     hasName: Boolean(contact.displayName),
     hasPhone: Boolean(contact.primaryPhone),
     offeredSlot,
     schedulingInPlay,
+    choseTime: choseATime(ordered),
+    callbackAllowed: !outboundCall || BUSY.test(latestText),
   }).filter((t) => !(opts.speculative && t.name === "book_appointment"));
 
   // Gate 1 runs before any generation — an escalation must not wait on tokens.
@@ -438,7 +480,9 @@ export async function* runVoiceTurn(opts: {
    * budget; anything that might need a fact or a booking was already routed
    * to the full path.
    */
-  if (route?.tier === "chat") {
+  // On a sales call it placed, "yes", "who is this?" and "how much?" all
+  // need the sales context and the facts, which the chat tier does not have.
+  if (route?.tier === "chat" && !outboundCall) {
     const agentName = tenant.settings?.agentName ?? "Alex";
     const leanSystem = [
       `You are ${agentName}, answering the phone for ${businessNameForRoute}.`,
@@ -613,6 +657,23 @@ export async function* runVoiceTurn(opts: {
    * "is someone home with the baby?", never saying it would be prioritised.
    * Recognised by rule, as Gate 1 recognises safety, so the model is told.
    */
+  if (outboundCall) {
+    notes.push(
+      `# You placed this call\nYou called ${outboundCall.name ?? "this person"} because they asked about ` +
+      `${outboundCall.interest} on our website, so they agreed to be contacted. You called them: never ` +
+      "ask what they are calling about or how you can help. Your goal is a booked free in-home visit.\n" +
+      "- If it is a bad time, offer to call back when it suits them, and stop.\n" +
+      "- Ask ONE short question at a time about their situation: how old the system is, what it is " +
+      "doing or not doing, how soon they want it sorted.\n" +
+      "- Tie what they tell you to what we actually offer, using only the facts you have.\n" +
+      "- Answer objections with facts and value. If they hesitate on price, say what the facts say about " +
+      "payment or financing, and that the in-home visit and written quote cost nothing and commit them to " +
+      "nothing. Never pressure, and never invent a discount or a deadline.\n" +
+      "- Once they are interested, offer two specific open times.\n" +
+      "- If they say no, or ask not to be called, thank them and end the call politely.",
+    );
+  }
+
   const heard = latestInbound?.body ?? "";
   if (URGENT.test(heard) || (FAULT.test(heard) && VULNERABLE.test(heard))) {
     notes.push(

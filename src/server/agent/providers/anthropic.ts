@@ -4,11 +4,17 @@ import type {
 } from "./types";
 import { LlmError } from "./types";
 
-/** Published per-MTok rates, used for the per-conversation cost column. */
+/**
+ * Published per-MTok rates, used for the per-conversation cost column. As of
+ * October 2026; check Anthropic's pricing page when they change. A model not
+ * listed here is costed at Opus rates, which overstates rather than hides.
+ * Cache writes (1.25x input, once per conversation) are not counted.
+ */
 const PRICING: Record<string, { in: number; out: number; cacheRead: number }> = {
   "claude-opus-5-5": { in: 4.0, out: 20.0, cacheRead: 0.2 },
   "claude-opus-5": { in: 5.0, out: 25.0, cacheRead: 0.5 },
-  "claude-sonnet-5-5": { in: 2.0, out: 10.0, cacheRead: 0.2 },
+  "claude-sonnet-5-5": { in: 2.0, out: 10.0, cacheRead: 0.1 },
+  "claude-haiku-5-5": { in: 0.1, out: 0.5, cacheRead: 0.01 },
   "claude-haiku-4-5": { in: 1.0, out: 5.0, cacheRead: 0.1 },
 };
 

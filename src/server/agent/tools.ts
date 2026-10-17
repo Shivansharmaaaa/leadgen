@@ -388,6 +388,15 @@ async function bookAppointment(ctx: AgentContext, input: Record<string, unknown>
     ),
   });
   if (clash) {
+    // Already theirs: the same person at the same start. Refusing told a
+    // caller "Saturday at 9 is taken" when the agent had just booked it for
+    // them a turn earlier.
+    if (clash.contactId === ctx.contactId && clash.startsAt.getTime() === startsAt.getTime()) {
+      return {
+        ok: true, appointment_id: clash.id, already_booked: true,
+        confirmed_for: formatInTimeZone(startsAt, tz, "EEEE d MMMM 'at' h:mm a"),
+      };
+    }
     return { ok: false, error: "that slot was just taken — call check_availability again" };
   }
 
