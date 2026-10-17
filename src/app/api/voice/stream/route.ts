@@ -7,7 +7,7 @@ import { extractIdentifiers, extractName } from "@/server/core/extract";
 import { linkIdentifierToContact } from "@/server/core/identity";
 import { extractMemories } from "@/server/memory/extract";
 import { runVoiceTurn } from "@/server/agent/voice-turn";
-import { and, gte } from "drizzle-orm";
+import { and, desc, gte } from "drizzle-orm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,14 +50,6 @@ export async function POST(req: Request) {
   const found = extractIdentifiers(text, tenant.country);
   for (const phone of found.phones) await linkIdentifierToContact(tenant.id, contact.id, "phone", phone);
   for (const email of found.emails) await linkIdentifierToContact(tenant.id, contact.id, "email", email);
-  // Saved before the turn, so book_appointment (which needs a name) is
-  // offered on the very turn the caller gives it. Never replaces a different
-  // name, only extends one ("Sam" -> "Sam Carter").
-  const name = extractName(text);
-  if (name && (!contact.displayName || (name.startsWith(contact.displayName) && name !== contact.displayName))) {
-    await db.update(contacts).set({ displayName: name }).where(eq(contacts.id, contact.id));
-  }
-
   let conversation = await db.query.conversations.findFirst({
     where: and(
       eq(conversations.tenantId, tenant.id),
@@ -70,6 +62,20 @@ export async function POST(req: Request) {
       tenantId: tenant.id, contactId: contact.id,
       channel: "voice", externalThreadId: sessionId,
     }).returning();
+  }
+
+  // Saved before the turn, so book_appointment (which needs a name) is
+  // offered on the very turn the caller gives it. Never replaces a different
+  // name, only extends one ("Sam" -> "Sam Carter"). The agent's last line lets
+  // a bare "Grace Fontaine." count, but only as the answer to a name question.
+  const lastAgentLine = (await db.query.messages.findFirst({
+    columns: { body: true },
+    where: and(eq(messagesTable.conversationId, conversation.id), eq(messagesTable.direction, "outbound")),
+    orderBy: desc(messagesTable.createdAt),
+  }))?.body;
+  const name = extractName(text, { lastAgentLine });
+  if (name && (!contact.displayName || (name.startsWith(contact.displayName) && name !== contact.displayName))) {
+    await db.update(contacts).set({ displayName: name }).where(eq(contacts.id, contact.id));
   }
 
   /**

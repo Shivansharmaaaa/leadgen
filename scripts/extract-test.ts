@@ -38,6 +38,23 @@ is("This is Express Entry stuff", null);
 is("I'm calling about my AC", null);
 is("I'm International, applying for a master's", null);
 
+console.log("\nA bare name, only as the answer to a name question");
+const asked = (text: string, last: string, want: string | null) => {
+  const got = extractName(text, { lastAgentLine: last });
+  check(`${JSON.stringify(text)} after ${JSON.stringify(last)} → ${want ?? "no name"}`, got === want, String(got));
+};
+asked("Grace Fontaine.", "Great. Can I get your name?", "Grace Fontaine");
+asked("grace fontaine", "Perfect. What name should I put it under?", "Grace Fontaine");
+asked("Yeah, it's Grace.", "And your name, please?", "Grace");
+asked("Tori, t o r i.", "Can I get your name for the booking?", "Tori");
+asked("Saturday at nine", "Can I get your name?", null);
+asked("The first one.", "Can I get your name?", null);
+asked("Yes.", "Can I get your name?", null);
+asked("Nine thirty.", "What name should I put it under?", null);
+asked("Grace Fontaine.", "Which time works better for you?", null);
+asked("I want a refund for my visit", "Can I get your name?", null);
+is("Grace Fontaine.", null);
+
 console.log("\nNumbers");
 const us = extractIdentifiers("call me on 617 555 0134", "US").phones;
 check("a spoken US number is normalised", us.length === 1 && us[0] === "+16175550134", us.join(","));

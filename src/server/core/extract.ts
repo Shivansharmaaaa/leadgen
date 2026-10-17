@@ -70,10 +70,41 @@ const NOT_A_NAME = new Set([
 
 const titleCase = (w: string) => w[0].toUpperCase() + w.slice(1).toLowerCase();
 
-export function extractName(text: string): string | null {
+/** The agent's last line asked for a name: "Can I get your name?", "What name should I put it under?" */
+const NAME_QUESTION = /\bname\b[^?]*\?/i;
+/** Answers to a name question that are not names: a time, a choice, a yes. */
+const NOT_A_BARE_NAME = /\d|\b(?:yes|yeah|yep|no|nope|sure|okay|ok|first|second|other|one|earlier|later|am|pm|o'?clock|thirty|fifteen|half|quarter|noon|nine|ten|eleven|twelve|two|three|four|five|six|seven|eight)\b/i;
+
+/**
+ * A name the caller states outright, or, when the agent has just asked for
+ * one, given on its own: "Grace Fontaine." The bare form is only trusted
+ * after a name question, and only as one to three plain words: "Saturday at
+ * nine", "the first one" and "yes" answer a different question. A spelled-out
+ * surname after it ("Tori, t o r i") is dropped.
+ */
+export function extractName(text: string, opts: { lastAgentLine?: string | null } = {}): string | null {
   const m = text.match(NAME_EXPLICIT) ?? text.match(NAME_IMPLICIT);
-  if (!m || NOT_A_NAME.has(m[1].toLowerCase())) return null;
-  const parts = [m[1]];
-  if (m[2] && !NOT_A_NAME.has(m[2].toLowerCase())) parts.push(m[2]);
-  return parts.map(titleCase).join(" ");
+  if (m) {
+    if (NOT_A_NAME.has(m[1].toLowerCase())) return null;
+    const parts = [m[1]];
+    if (m[2] && !NOT_A_NAME.has(m[2].toLowerCase())) parts.push(m[2]);
+    return parts.map(titleCase).join(" ");
+  }
+  if (!opts.lastAgentLine || !NAME_QUESTION.test(opts.lastAgentLine)) return null;
+  const bare = text.trim()
+    .replace(/^(?:(?:oh|um|uh|so|yeah|yes|sure|okay|ok|it'?s|it is)\b[\s,]*)+/i, "")
+    .replace(/[.!?]+$/, "")
+    .trim();
+  if (!bare || NOT_A_BARE_NAME.test(bare)) return null;
+  let words = bare.split(/[\s,]+/).filter(Boolean);
+  // "Tori t o r i": a run of single letters spelling one of the words.
+  const firstLetter = words.findIndex((w) => w.length === 1);
+  if (firstLetter > 0 && words.slice(firstLetter).every((w) => w.length === 1)) {
+    const spelled = words.slice(firstLetter).join("").toLowerCase();
+    if (words.slice(0, firstLetter).some((w) => w.toLowerCase() === spelled)) words = words.slice(0, firstLetter);
+  }
+  if (words.length === 0 || words.length > 3) return null;
+  if (!words.every((w) => /^[A-Za-z][A-Za-z'-]*$/.test(w) && w.length > 1)) return null;
+  if (words.some((w) => NOT_A_NAME.has(w.toLowerCase()))) return null;
+  return words.map(titleCase).join(" ");
 }
