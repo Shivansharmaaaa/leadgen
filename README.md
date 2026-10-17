@@ -95,14 +95,15 @@ sign-in), and each piece has its own test suite that runs without a model
 | **STOP / opt-out** | every channel | STOP, UNSUBSCRIBE or "please stop texting me" is honoured by rule, before the agent sees it; on a call only an explicit "don't call me again" counts. |
 | **Reminders** | automatic on every booking | Day before and same day (never outside 8am–8pm local), plus a written confirmation for bookings made on a call. Reply C to confirm, R to reschedule (a person finds the new time). |
 | **Team alerts** | automatic on every handover | Texts staff: emergencies (gas smell, CO alarm) to whoever is on call at any hour; other handovers during opening hours; after-hours non-urgent ones wait for opening. Someone who smells gas is first told to leave and call 911. |
-| **Conversation scoring** | `/dashboard` | Every conversation's outcome and what was missed: asked for a time and never offered one, price question dodged, reply stuck in review, handover nobody answered, and more, each with the line that raised it. |
+| **Conversation scoring** | `/dashboard`, `/inbox?view=attention` | Every conversation's outcome and what was missed: asked for a time and never offered one, price question dodged, reply stuck in review, handover nobody answered, and more, each with the line that raised it. |
 | **CRM webhooks** | `/settings` → Send to your CRM | New leads, bookings, confirmations, reschedules, handovers and opt-outs POSTed as signed JSON (`x-leadgen-signature`, HMAC-SHA256, replay-proof) to a CRM, Zapier or Make. Retries with backoff. |
+| **Lead sources and cost per job** | `/dashboard`, spend in `/settings` | Booked rate, cost per lead and cost per booked job for each source; missed calls count as leads; paid sources with no bookings are flagged. |
 | **Reactivation campaigns** | `/dashboard` → Start campaign | Messages the top dormant leads who agreed to hear from you, ranked by expected *incremental* value. Every campaign holds a random ~15% back first, so "Did it actually work?" can answer honestly. 10am–7pm only; a STOP after launch wins. |
 | **Closing jobs** | `/dashboard` → How did these jobs go? | Done / No-show / Cancelled on past jobs. Done wins the lead and asks for a review three hours later. |
 | **Morning summary** | email, 8am local | What happened in the last day and what needs the owner, with links. |
 | **Calendar feed** | `/settings` → Jobs in your calendar | A private iCalendar link: every booking, with the customer's name and number, in Google, Apple or Outlook calendar. |
 | **Erasure** | `/inbox` → erase | Deletes everything about a person on request (UK GDPR Art. 17, CCPA, PIPEDA), and keeps a hashed do-not-contact entry so they're never contacted again. |
-| **Owner sign-in** | `/login` | `/dashboard`, `/inbox`, `/settings` and the inbox API need `ADMIN_PASSWORD`. Open in development; refused in production until it is set. |
+| **Owner sign-in** | `/login` | `/dashboard`, `/inbox`, `/settings`, the `/voice` demo and their APIs need `ADMIN_PASSWORD`. Open in development; refused in production until it is set. |
 
 ### Setting them up
 
