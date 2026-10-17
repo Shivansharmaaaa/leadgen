@@ -100,6 +100,7 @@ sign-in), and each piece has its own test suite that runs without a model
 | **Reactivation campaigns** | `/dashboard` → Start campaign | Messages the top dormant leads who agreed to hear from you, ranked by expected *incremental* value. Every campaign holds a random ~15% back first, so "Did it actually work?" can answer honestly. 10am–7pm only; a STOP after launch wins. |
 | **Closing jobs** | `/dashboard` → How did these jobs go? | Done / No-show / Cancelled on past jobs. Done wins the lead and asks for a review three hours later. |
 | **Morning summary** | email, 8am local | What happened in the last day and what needs the owner, with links. |
+| **Calendar feed** | `/settings` → Jobs in your calendar | A private iCalendar link: every booking, with the customer's name and number, in Google, Apple or Outlook calendar. |
 | **Erasure** | `/inbox` → erase | Deletes everything about a person on request (UK GDPR Art. 17, CCPA, PIPEDA), and keeps a hashed do-not-contact entry so they're never contacted again. |
 | **Owner sign-in** | `/login` | `/dashboard`, `/inbox`, `/settings` and the inbox API need `ADMIN_PASSWORD`. Open in development; refused in production until it is set. |
 
@@ -178,7 +179,7 @@ interval that says "not yet proven" when it crosses zero.
 
 **Not built yet:** per-user accounts across several businesses (one owner
 password per deployment for now), calendar sync with ServiceTitan / Jobber /
-Google Calendar (the webhooks are the bridge until then), and billing.
+Google Calendar (the webhooks and the read-only calendar feed bridge it until then), and billing.
 
 ## Things deliberately NOT built
 
