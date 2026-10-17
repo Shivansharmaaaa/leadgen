@@ -42,6 +42,7 @@
     "imports:test": "tsx scripts/imports-test.ts",
     "extract:test": "tsx scripts/extract-test.ts",
     "routing:test": "tsx --env-file=.env scripts/routing-test.ts",
+    "delivery:test": "tsx scripts/delivery-test.ts",
     "test": "tsx scripts/test-all.ts",
     "twilio:verify": "tsx --env-file=.env scripts/verify-twilio.ts",
     "tunnel": "bash scripts/tunnel.sh",

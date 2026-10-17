@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
  */
 const SUITES = [
   "intake", "reminders", "alerts", "scoring", "webchat", "webhooks", "auth", "settings",
-  "email", "erasure", "campaigns", "outcomes", "digest", "calendar", "imports", "extract", "routing",
+  "email", "erasure", "campaigns", "outcomes", "digest", "calendar", "imports", "extract", "routing", "delivery",
 ];
 
 type Row = { name: string; ok: boolean; passed: number; seconds: number; tail: string };
