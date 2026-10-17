@@ -189,8 +189,11 @@ export function planDelivery(sentence: string, ctx: DeliveryContext, persona: Pe
   }
 
   // Pacing: slow where a mistake is costly, quick where nothing is at stake.
-  if (times.length) { rate *= 0.92; emphasis.push(...times); }
-  if (money.length) { rate *= 0.94; emphasis.push(...money); }
+  // Eased on 17 Oct when the base pace went 0.85 → 0.92: at 0.92 and 0.94
+  // a sentence with a time came out exactly as slow as before, and the user
+  // asked for everything a bit faster. Still slower than the sentences round it.
+  if (times.length) { rate *= 0.95; emphasis.push(...times); }
+  if (money.length) { rate *= 0.96; emphasis.push(...money); }
   if (phones.length) { rate *= 0.85; emphasis.push(...phones); }
   if (!ctx.safety && !times.length && !money.length && words(text) <= 4 && reason !== "acknowledging a concern") rate *= 1.05;
   if (words(text) > 22) rate *= 0.97;
@@ -264,7 +267,9 @@ const MOOD: Record<Style, string> = {
 
 /** For instruction-following TTS: one sentence of direction, never a character to play. */
 export function toInstruction(d: Delivery, persona: Persona): string {
-  const pace = d.rate < 0.93 ? "a little slower than usual" : d.rate > 1.03 ? "a touch quicker" : "at a natural pace";
+  // Relative to this persona's own pace: a professional persona is a touch slower throughout.
+  const relative = d.rate / persona.baseRate;
+  const pace = relative < 0.98 ? "a little slower than usual" : relative > 1.03 ? "a touch quicker" : "at a natural pace";
   const stress = d.emphasis.length ? ` Stress ${d.emphasis.map((e) => `"${e}"`).join(" and ")}.` : "";
   return `Speak ${MOOD[d.style]}, ${pace}, as ${persona.description}.${stress}`;
 }
